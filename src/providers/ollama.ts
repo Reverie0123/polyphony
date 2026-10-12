@@ -34,9 +34,13 @@ export function parseOllamaLine(line: string): ChatEvent[] {
 
 export const chatOllama: ChatFn = async function* (ctx, req) {
   const base = (ctx.account.baseURL || "http://127.0.0.1:11434").replace(/\/+$/, "");
-  const messages: { role: string; content: string }[] = [];
+  const messages: { role: string; content: string; images?: string[] }[] = [];
   if (req.system) messages.push({ role: "system", content: req.system });
   for (const m of req.messages) messages.push({ role: m.role, content: m.content });
+  if (req.images?.length) {
+    const last = [...messages].reverse().find((m) => m.role === "user");
+    if (last) last.images = req.images.map((im) => im.data);
+  }
   const body: Record<string, unknown> = { model: req.model, messages, stream: true };
   const options: Record<string, unknown> = {};
   if (req.temperature !== undefined) options.temperature = req.temperature;

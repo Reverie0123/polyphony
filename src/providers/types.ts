@@ -13,10 +13,18 @@ export interface ToolDef {
   parameters: Record<string, unknown>;
 }
 
+export interface ImageInput {
+  mime: string;
+  /** Base64 without a data: prefix. */
+  data: string;
+}
+
 export interface ChatRequest {
   model: string;
   system: string;
   messages: ChatMessage[];
+  /** Images attached to the last user message (vision requests only). */
+  images?: ImageInput[];
   temperature?: number;
   maxTokens?: number;
   tools?: ToolDef[];

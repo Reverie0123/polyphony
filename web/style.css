@@ -213,3 +213,25 @@ table.pricing input { width: 70px; padding: 2px 4px; border: 1px solid var(--lin
   .msg .body { max-width: 92%; }
   .two-col { grid-template-columns: 1fr; }
 }
+
+/* ----- phase 2: attachments, search, pinned strip, editing ----- */
+.search-box { padding: 0 12px 8px; }
+.search-box input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--bg-input); }
+.search-hit .snippet { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attach-row { display: flex; gap: 6px; flex-wrap: wrap; padding-bottom: 6px; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: 12px; background: var(--bg); max-width: 260px; }
+.attach-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.attach-chip .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attach-chip button { border: none; background: transparent; color: var(--text-3); padding: 0 2px; }
+.bubble img.att { max-width: 100%; max-height: 360px; border-radius: 6px; display: block; margin: 4px 0; cursor: zoom-in; }
+.att-caption { font-size: 12px; color: var(--text-2); background: rgba(0,0,0,.05); border-radius: 6px; padding: 5px 8px; margin: 2px 0 6px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
+.att-caption .by { color: var(--text-3); display: block; margin-bottom: 2px; }
+.file-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; font-size: 12.5px; background: rgba(0,0,0,.04); margin: 3px 4px 3px 0; }
+.file-chip .size { color: var(--text-3); font-size: 11px; }
+.pinned-strip { border-bottom: 1px solid var(--line); background: var(--bg-card); padding: 4px 16px; font-size: 12px; color: var(--text-2); display: flex; gap: 10px; overflow-x: auto; }
+.pinned-strip span { cursor: pointer; white-space: nowrap; }
+.pinned-strip span:hover { color: var(--accent); }
+.msg.highlight .bubble { outline: 2px solid var(--accent); }
+.folded { font-size: 12px; color: var(--text-3); }
+.folded summary { cursor: pointer; }
+.msg .star { color: var(--warn); }

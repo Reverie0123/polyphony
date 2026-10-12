@@ -8,14 +8,20 @@ import { timingSafeEqual } from "node:crypto";
 import { Store } from "./store.js";
 import { Pricing } from "./pricing.js";
 import { Engine } from "./engine.js";
+import { Attachments, isImage } from "./attachments.js";
+import { Vision } from "./vision.js";
+import { Summarizer } from "./summary.js";
 import { discoverModels } from "./providers/discover.js";
 import { ProviderError } from "./providers/index.js";
-import { type Account, type Contact, type Member, type Session, type Settings, DESKDOCK_CONTACT_ID } from "./models.js";
+import { type Account, type Attachment, type Contact, type Member, type Message, type Session, type Settings, DESKDOCK_CONTACT_ID } from "./models.js";
 
 export interface ServerOptions {
   store: Store;
   pricing: Pricing;
   engine: Engine;
+  attachments: Attachments;
+  vision: Vision;
+  summarizer: Summarizer;
   token: string;
   lanToken?: string;
   version: string;
@@ -92,8 +98,22 @@ function safeEqual(a: string, b: string): boolean {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
+/** Finds "@nickname" mentions typed into the text, longest nicknames first so "小 C" beats "小". */
+export function parseMentions(text: string, members: { contactId: string; nickname: string }[]): string[] {
+  const out: string[] = [];
+  const sorted = [...members].filter((m) => m.nickname).sort((a, b) => b.nickname.length - a.nickname.length);
+  let rest = text;
+  for (const m of sorted) {
+    const needle = "@" + m.nickname;
+    if (!rest.includes(needle)) continue;
+    if (!out.includes(m.contactId)) out.push(m.contactId);
+    rest = rest.split(needle).join(" "); // consumed, so a shorter nickname inside it does not match too
+  }
+  return out;
+}
+
 export function createApp(opts: ServerOptions): { server: http.Server; hub: SseHub } {
-  const { store, pricing, engine } = opts;
+  const { store, pricing, engine, attachments, vision, summarizer } = opts;
   const webDir = opts.webDir ?? defaultWebDir();
   const hub = new SseHub(opts.onClients);
 
@@ -168,6 +188,49 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         lanAddresses: store.getSettings().lanAccess ? [...localAddresses()].filter((a) => /^\d/.test(a) && a !== "127.0.0.1") : [],
         lanToken: store.getSettings().lanAccess ? opts.lanToken ?? null : null,
       });
+    }
+
+    // ----- attachments -----
+    if (p === "/api/upload" && method === "POST") {
+      const b = await readBody(req);
+      const data = str(b.data);
+      if (!data) throw new HttpError(400, "empty file", "empty");
+      let bytes: Buffer;
+      try { bytes = Buffer.from(data, "base64"); } catch { throw new HttpError(400, "bad base64"); }
+      try {
+        return json(res, 200, attachments.save(str(b.name) || "file", str(b.mime), bytes));
+      } catch (e) {
+        throw new HttpError(413, (e as Error).message, "too_large");
+      }
+    }
+    if (parts[1] === "attachments" && parts.length === 3 && method === "GET") {
+      const file = attachments.read(seg(2));
+      if (!file) throw new HttpError(404, "attachment not found", "not_found");
+      res.writeHead(200, { "Content-Type": attachments.mimeOf(seg(2)), "Cache-Control": "private, max-age=86400", "Content-Length": file.bytes.length });
+      res.end(file.bytes);
+      return;
+    }
+
+    // ----- search -----
+    if (p === "/api/search" && method === "GET") {
+      const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+      if (!q) return json(res, 200, { results: [] });
+      const results: { sessionId: string; title: string; messageId: string; seq: number; sender: string; snippet: string; createdAt: string }[] = [];
+      for (const meta of store.listSessions()) {
+        const s = store.getSession(meta.id);
+        if (!s) continue;
+        for (const m of s.messages) {
+          const hay = (m.text + " " + (m.attachments ?? []).map((a) => a.name).join(" ")).toLowerCase();
+          const i = hay.indexOf(q);
+          if (i < 0) continue;
+          const start = Math.max(0, i - 30);
+          results.push({ sessionId: s.id, title: s.title, messageId: m.id, seq: m.seq, sender: m.sender, snippet: m.text.slice(start, start + 90), createdAt: m.createdAt });
+          if (results.length >= 100) break;
+        }
+        if (results.length >= 100) break;
+      }
+      results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return json(res, 200, { results });
     }
 
     // ----- settings -----
@@ -310,29 +373,60 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         hub.broadcast("session.deleted", { sessionId: id });
         return json(res, 200, { ok });
       }
+      if (parts[3] === "export" && method === "GET") {
+        const md = exportMarkdown(s, store.listContacts(), (m) => engine.textOf(m), store.getSettings());
+        res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(s.title.replace(/[\\/:*?"<>|]/g, "_"))}.md` });
+        res.end(md);
+        return;
+      }
       if (parts[3] === "messages" && method === "POST" && parts.length === 4) {
         const b = await readBody(req);
         const text = str(b.text).trim();
-        if (!text) throw new HttpError(400, "empty message", "empty");
+        const hashes = Array.isArray(b.attachments) ? (b.attachments as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        const atts: Attachment[] = hashes.map((h) => attachments.get(h)).filter((a): a is Attachment => !!a);
+        if (!text && !atts.length) throw new HttpError(400, "empty message", "empty");
+        const nicks = s.members.map((m) => ({ contactId: m.contactId, nickname: store.getContact(m.contactId)?.nickname ?? "" }));
         let mentions = Array.isArray(b.mentions) ? (b.mentions as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        for (const id of parseMentions(text, nicks)) if (!mentions.includes(id)) mentions.push(id);
         if (s.kind === "direct") mentions = [s.members[0].contactId];
         mentions = mentions.filter((m) => s.members.some((x) => x.contactId === m));
         const privateTo = bool(b.whisper) && mentions.length ? mentions : undefined;
+        const editedFrom = str(b.editedFrom) || undefined;
+        if (editedFrom) {
+          const old = s.messages.find((x) => x.id === editedFrom && x.sender === "user");
+          if (old) { old.excludedFromContext = true; hub.broadcast("message.updated", { sessionId: s.id, message: old }); }
+        }
+        const kind: Message["kind"] = atts.some((a) => isImage(a.mime)) ? "image" : atts.length ? "file" : "text";
         const userMsg = store.appendMessage(s, {
-          sender: "user", kind: "text", text, attachments: [], mentions, replyTo: str(b.replyTo) || undefined,
+          sender: "user", kind, text, attachments: atts, mentions, replyTo: str(b.replyTo) || undefined, editedFrom,
           privateTo, excludedFromContext: false, starred: false, pinned: false, status: "done",
         });
         hub.broadcast("message.created", { sessionId: s.id, message: userMsg });
-        // Replies run after the response is sent; the page follows them over SSE.
-        const replyIds: string[] = [];
+        // Replies run after the response is sent; the page follows them over SSE. Image captions come first so the
+        // mentioned models see them.
         const run = async () => {
+          await vision.describe(s, userMsg);
           for (const contactId of mentions) {
             if (contactId === DESKDOCK_CONTACT_ID) continue;
             await engine.reply(s, contactId, userMsg);
           }
+          if (!mentions.length) void summarizer.maybeRun(s);
         };
         void run();
-        return json(res, 200, { message: userMsg, replyIds });
+        return json(res, 200, { message: userMsg });
+      }
+      if (parts[3] === "messages" && parts[5] === "forward" && method === "POST") {
+        const b = await readBody(req);
+        const m = s.messages.find((x) => x.id === seg(4));
+        const target = store.getSession(str(b.targetSessionId));
+        if (!m || !target) throw new HttpError(404, "message or target not found", "not_found");
+        const copy = store.appendMessage(target, {
+          sender: m.sender, kind: m.kind, text: m.text, attachments: m.attachments, mentions: [], forwardedFrom: { sessionId: s.id, messageId: m.id },
+          excludedFromContext: false, starred: false, pinned: false, status: "done", model: m.model,
+        });
+        hub.broadcast("message.created", { sessionId: target.id, message: copy });
+        hub.broadcast("session.updated", { session: withoutMessages(target) });
+        return json(res, 200, copy);
       }
       if (parts[3] === "messages" && parts.length === 5) {
         const mid = seg(4);
@@ -341,18 +435,26 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         if (method === "DELETE") {
           engine.cancel(mid);
           s.messages = s.messages.filter((x) => x.id !== mid);
-          if (s.summary && m.seq <= s.summary.coversUpToSeq) s.summary.dirty = true;
+          const touchesSummary = !!s.summary && m.seq <= s.summary.coversUpToSeq;
+          if (touchesSummary) s.summary!.dirty = true;
           store.saveSession(s);
           hub.broadcast("message.deleted", { sessionId: s.id, messageId: mid });
+          if (touchesSummary) void summarizer.maybeRun(s);
           return json(res, 200, { ok: true });
         }
         if (method === "PATCH") {
           const b = await readBody(req);
-          if (typeof b.excludedFromContext === "boolean") m.excludedFromContext = b.excludedFromContext;
+          let touchesSummary = false;
+          if (typeof b.excludedFromContext === "boolean" && b.excludedFromContext !== m.excludedFromContext) {
+            m.excludedFromContext = b.excludedFromContext;
+            touchesSummary = !!s.summary && m.seq <= s.summary.coversUpToSeq;
+            if (touchesSummary) s.summary!.dirty = true;
+          }
           if (typeof b.starred === "boolean") m.starred = b.starred;
           if (typeof b.pinned === "boolean") m.pinned = b.pinned;
           store.saveSession(s);
           hub.broadcast("message.updated", { sessionId: s.id, message: m });
+          if (touchesSummary) void summarizer.maybeRun(s);
           return json(res, 200, m);
         }
       }
@@ -466,6 +568,36 @@ function serveStatic(res: http.ServerResponse, webDir: string, urlPath: string):
 function withoutMessages(s: Session): Omit<Session, "messages"> {
   const { messages, ...rest } = s;
   return rest;
+}
+
+export function exportMarkdown(s: Session, contacts: Contact[], textOf: (m: Message) => string, settings: Settings): string {
+  const nick = (id: string) => (id === "user" ? "我" : id === "system" ? "系统" : contacts.find((c) => c.id === id)?.nickname ?? id);
+  const cny = settings.currency === "cny";
+  const money = (m: Message) => {
+    if (!m.cost) return "";
+    if (m.cost.kind === "subscription") return "订阅";
+    if (m.cost.kind === "free") return "免费";
+    if (!m.cost.priced) return "未定价";
+    return cny ? `¥${m.cost.cny.toFixed(4)}` : `$${m.cost.usd.toFixed(4)}`;
+  };
+  const lines: string[] = [`# ${s.title}`, ""];
+  if (s.intro) lines.push(`> ${s.intro}`, "");
+  lines.push(`成员：${s.members.map((m) => nick(m.contactId)).join("、")}`, "");
+  for (const m of s.messages) {
+    const when = m.createdAt.replace("T", " ").slice(0, 19);
+    const flags: string[] = [];
+    if (m.privateTo?.length) flags.push("悄悄话");
+    if (m.excludedFromContext) flags.push("已移出共享历史");
+    if (m.editedFrom) flags.push("编辑重发");
+    if (m.forwardedFrom) flags.push("转发");
+    if (m.status === "error") flags.push(`出错：${m.error?.message ?? ""}`);
+    if (m.status === "cancelled") flags.push("已取消");
+    const meta = [when, money(m), m.usage ? `输入 ${m.usage.input + m.usage.cacheRead} / 输出 ${m.usage.output}` : "", ...flags].filter(Boolean).join(" · ");
+    lines.push(`### ${nick(m.sender)}`, `<sub>${meta}</sub>`, "");
+    lines.push(textOf(m) || "（空）", "");
+    for (const v of m.versions ?? []) lines.push("<details><summary>上一版</summary>", "", v.text, "", "</details>", "");
+  }
+  return lines.join("\n");
 }
 
 export function defaultBaseURL(provider: string): string {

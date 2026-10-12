@@ -227,7 +227,36 @@ async function boot() {
   document.getElementById("btn-settings").addEventListener("click", openSettings);
   document.getElementById("btn-panel").addEventListener("click", () => panel.toggle(current));
   document.getElementById("btn-back").addEventListener("click", closeSession);
+  wireSearch();
   if (ctx.sessions.length) openSession(ctx.sessions[0].id);
+}
+
+function wireSearch() {
+  const box = document.getElementById("search");
+  const results = document.getElementById("search-results");
+  const list = document.getElementById("session-list");
+  let timer = null;
+  box.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = box.value.trim();
+    if (!q) { results.classList.add("hidden"); list.classList.remove("hidden"); return; }
+    timer = setTimeout(async () => {
+      let data;
+      try { data = await get("/api/search?q=" + encodeURIComponent(q)); } catch { return; }
+      results.innerHTML = "";
+      list.classList.add("hidden");
+      results.classList.remove("hidden");
+      if (!data.results.length) { results.innerHTML = `<div class="hint" style="padding:10px">${escapeHtml(t("search.none"))}</div>`; return; }
+      for (const r of data.results) {
+        const item = document.createElement("div");
+        item.className = "session-item search-hit";
+        const who = r.sender === "user" ? t("you") : (ctx.contacts.find((c) => c.id === r.sender)?.nickname ?? r.sender);
+        item.innerHTML = `<div class="meta"><div class="name">${escapeHtml(r.title)}</div><div class="snippet">${escapeHtml(who)}: ${escapeHtml(r.snippet)}</div></div>`;
+        item.addEventListener("click", async () => { await openSession(r.sessionId); chat.scrollTo(r.messageId); });
+        results.appendChild(item);
+      }
+    }, 250);
+  });
 }
 
 boot();

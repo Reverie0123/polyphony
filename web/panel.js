@@ -1,7 +1,7 @@
 // Side panel: members and role cards, cost summary, session settings. Resizable and maximizable.
 import { t } from "./i18n.js";
 import { escapeHtml } from "./markdown.js";
-import { get, patch, del } from "./api.js";
+import { get, patch, del, getToken } from "./api.js";
 import { avatarEl, formatCost } from "./chat.js";
 
 export class Panel {
@@ -132,7 +132,7 @@ export class Panel {
       html += f(t("session.gap"), `<input id="p-gap" type="number" min="0" value="${s.roundGapSec}">`);
     }
     html += `<div class="section-title">${escapeHtml(t("session.context"))}</div><div class="row">${f(t("session.recentCount"), `<input id="p-count" type="number" min="1" value="${s.context.recentCount}">`)}${f(t("session.recentTokens"), `<input id="p-tokens" type="number" min="500" step="500" value="${s.context.recentTokens}">`)}</div>`;
-    html += `<div class="row" style="margin-top:8px"><button class="btn primary" id="p-save">${escapeHtml(t("action.save"))}</button><button class="btn" id="p-pin">${escapeHtml(s.pinned ? t("session.unpin") : t("session.pin"))}</button><button class="btn danger" id="p-del">${escapeHtml(t("action.delete"))}</button></div>`;
+    html += `<div class="row" style="margin-top:8px"><button class="btn primary" id="p-save">${escapeHtml(t("action.save"))}</button><button class="btn" id="p-pin">${escapeHtml(s.pinned ? t("session.unpin") : t("session.pin"))}</button><button class="btn" id="p-export">${escapeHtml(t("action.export"))}</button><button class="btn danger" id="p-del">${escapeHtml(t("action.delete"))}</button></div>`;
     this.body.innerHTML = html;
     const q = (id) => this.body.querySelector(id);
     q("#p-save").addEventListener("click", async () => {
@@ -150,6 +150,7 @@ export class Panel {
       this.ctx.onSessionPatched(updated);
       this.ctx.toast(t("toast.saved"));
     });
+    q("#p-export").addEventListener("click", () => window.open(`/api/sessions/${s.id}/export?token=${encodeURIComponent(getToken())}`, "_blank"));
     q("#p-pin").addEventListener("click", async () => {
       const updated = await patch(`/api/sessions/${s.id}`, { pinned: !s.pinned });
       this.ctx.onSessionPatched(updated);

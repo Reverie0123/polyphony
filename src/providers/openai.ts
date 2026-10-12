@@ -71,9 +71,19 @@ export function parseOpenAIChunk(json: string, toolBuf: Map<number, { id: string
 
 export const chatOpenAI: ChatFn = async function* (ctx, req) {
   const base = ctx.account.baseURL.replace(/\/+$/, "");
-  const messages: { role: string; content: string }[] = [];
+  const messages: { role: string; content: unknown }[] = [];
   if (req.system) messages.push({ role: "system", content: req.system });
   for (const m of req.messages) messages.push({ role: m.role, content: m.content });
+  if (req.images?.length) {
+    // Images ride on the last user message as a content array.
+    const last = [...messages].reverse().find((m) => m.role === "user");
+    if (last) {
+      last.content = [
+        ...req.images.map((im) => ({ type: "image_url", image_url: { url: `data:${im.mime};base64,${im.data}` } })),
+        { type: "text", text: String(last.content) },
+      ];
+    }
+  }
   const body: Record<string, unknown> = {
     model: req.model,
     messages,

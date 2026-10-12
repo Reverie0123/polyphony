@@ -115,7 +115,12 @@ export interface Attachment {
   name: string;
   mime: string;
   size: number;
+  /** Text form: file contents for text files, description or OCR output for images. */
   caption?: string;
+  /** Who produced the caption: a contact nickname or "ocr". */
+  captionBy?: string;
+  captionCost?: Cost;
+  captionError?: string;
 }
 
 export interface Usage {

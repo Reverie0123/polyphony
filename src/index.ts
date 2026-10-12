@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import { Store, dataDir, writeJsonAtomic } from "./store.js";
 import { Pricing } from "./pricing.js";
 import { Engine } from "./engine.js";
+import { Attachments } from "./attachments.js";
+import { Vision } from "./vision.js";
+import { Summarizer } from "./summary.js";
 import { createApp } from "./server.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -130,9 +133,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   let clients = 0;
   let idleSince = Date.now();
-  const engine = new Engine({ store, pricing, broadcast: (e, d) => hub.broadcast(e, d), lang: () => uiLang(store) });
+  const lang = () => uiLang(store);
+  const broadcast = (e: string, d: unknown) => hub.broadcast(e, d);
+  const engine = new Engine({ store, pricing, broadcast, lang });
+  const attachments = new Attachments(dir);
+  const summarizer = new Summarizer({ store, pricing, broadcast, lang, call: engine.callContact });
+  const vision = new Vision({ store, pricing, attachments, broadcast, lang, call: engine.callContact });
+  engine.afterReply = (s) => { void summarizer.maybeRun(s); };
   const { server, hub } = createApp({
-    store, pricing, engine, token: tokens.token, lanToken, version,
+    store, pricing, engine, attachments, vision, summarizer, token: tokens.token, lanToken, version,
     onClients: (n) => { clients = n; if (n === 0) idleSince = Date.now(); },
   });
 
@@ -152,7 +161,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const timer = setInterval(() => {
     const minutes = store.getSettings().autoExitMinutes;
     if (minutes <= 0 || argv.includes("--no-exit")) return;
-    if (clients === 0 && engine.busy === 0 && Date.now() - idleSince > minutes * 60000) {
+    if (clients === 0 && engine.busy + summarizer.busy + vision.busy === 0 && Date.now() - idleSince > minutes * 60000) {
       console.log("no page connected; exiting");
       server.close();
       clearInterval(timer);

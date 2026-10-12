@@ -1,9 +1,10 @@
-// Message list, composer, privacy line. Talks to app state through the `ctx` object passed in.
-import { t, lang } from "./i18n.js";
+// Message list, composer, privacy line, attachments. Talks to app state through the `ctx` object passed in.
+import { t } from "./i18n.js";
 import { renderMarkdown, escapeHtml } from "./markdown.js";
-import { post, del, patch } from "./api.js";
+import { post, del, patch, getToken, uploadFile } from "./api.js";
+import { openModal } from "./modal.js";
 
-export function formatCost(cost, settings, opts = {}) {
+export function formatCost(cost, settings) {
   if (!cost) return "";
   if (cost.kind === "subscription") return t("privacy.subscription");
   if (cost.kind === "free") return t("cost.free");
@@ -27,6 +28,16 @@ function fmtTokens(n) {
   return String(n);
 }
 
+function fmtSize(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+  return n + " B";
+}
+
+export function attachmentUrl(hash) {
+  return `/api/attachments/${hash}?token=${encodeURIComponent(getToken())}`;
+}
+
 export function avatarEl(contact, extra = "") {
   const el = document.createElement("div");
   el.className = `avatar ${extra}`;
@@ -48,20 +59,35 @@ export class ChatView {
     this.privacyEl = document.getElementById("privacy-line");
     this.mentionRow = document.getElementById("mention-row");
     this.replyBar = document.getElementById("reply-bar");
+    this.editBar = document.getElementById("edit-bar");
+    this.attachRow = document.getElementById("attach-row");
+    this.pinnedStrip = document.getElementById("pinned-strip");
     this.whisperLabel = document.getElementById("whisper-label");
     this.whisper = document.getElementById("whisper");
+    this.fileInput = document.getElementById("file-input");
     this.session = null;
     this.mentions = new Set();
     this.replyTo = null;
+    this.editingFrom = null;
+    this.pendingAttachments = [];
     this.previewTimer = null;
     this.nodes = new Map();
 
     this.sendBtn.addEventListener("click", () => this.send());
     this.input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); }
+      if (e.key === "Escape") { this.setReply(null); this.setEditing(null); }
     });
     this.input.addEventListener("input", () => { this.autosize(); this.schedulePreview(); });
+    this.input.addEventListener("paste", (e) => {
+      const files = [...(e.clipboardData?.files ?? [])];
+      if (files.length) { e.preventDefault(); this.addFiles(files); }
+    });
     this.whisper.addEventListener("change", () => this.schedulePreview());
+    document.getElementById("btn-attach").addEventListener("click", () => this.fileInput.click());
+    this.fileInput.addEventListener("change", () => { this.addFiles([...this.fileInput.files]); this.fileInput.value = ""; });
+    this.listEl.addEventListener("dragover", (e) => { e.preventDefault(); });
+    this.listEl.addEventListener("drop", (e) => { e.preventDefault(); this.addFiles([...(e.dataTransfer?.files ?? [])]); });
   }
 
   autosize() {
@@ -73,13 +99,18 @@ export class ChatView {
     this.session = session;
     this.mentions = new Set();
     this.replyTo = null;
+    this.editingFrom = null;
+    this.pendingAttachments = [];
     this.nodes.clear();
     this.listEl.innerHTML = "";
     this.replyBar.classList.add("hidden");
+    this.editBar.classList.add("hidden");
+    this.renderAttachRow();
     const group = session.kind === "group";
     this.whisperLabel.classList.toggle("hidden", !group);
     this.renderMentionRow();
     for (const m of session.messages) this.renderMessage(m, false);
+    this.renderPinned();
     this.scrollToEnd(true);
     this.updatePrivacy();
     this.input.focus();
@@ -91,8 +122,11 @@ export class ChatView {
 
   nick(id) {
     if (id === "user") return t("you");
+    if (id === "system") return "";
     return this.contact(id)?.nickname ?? id;
   }
+
+  // ----- composer -----
 
   renderMentionRow() {
     const s = this.session;
@@ -111,6 +145,32 @@ export class ChatView {
       });
       this.mentionRow.appendChild(chip);
     }
+  }
+
+  async addFiles(files) {
+    for (const f of files) {
+      try {
+        const att = await uploadFile(f);
+        this.pendingAttachments.push(att);
+      } catch (err) {
+        this.ctx.toast(t("upload.failed", { err: err.message }), true);
+      }
+    }
+    this.renderAttachRow();
+  }
+
+  renderAttachRow() {
+    const row = this.attachRow;
+    row.innerHTML = "";
+    row.classList.toggle("hidden", !this.pendingAttachments.length);
+    this.pendingAttachments.forEach((a, i) => {
+      const chip = document.createElement("span");
+      chip.className = "attach-chip";
+      if (a.mime.startsWith("image/")) { const img = document.createElement("img"); img.src = attachmentUrl(a.hash); chip.appendChild(img); }
+      const n = document.createElement("span"); n.className = "n"; n.textContent = `${a.name} (${fmtSize(a.size)})`; chip.appendChild(n);
+      const x = document.createElement("button"); x.textContent = "✕"; x.addEventListener("click", () => { this.pendingAttachments.splice(i, 1); this.renderAttachRow(); }); chip.appendChild(x);
+      row.appendChild(chip);
+    });
   }
 
   schedulePreview() {
@@ -154,19 +214,41 @@ export class ChatView {
     this.input.focus();
   }
 
+  setEditing(message) {
+    this.editingFrom = message ? message.id : null;
+    if (!message) { this.editBar.classList.add("hidden"); return; }
+    this.editBar.classList.remove("hidden");
+    this.editBar.innerHTML = `<span>✎ ${escapeHtml(t("msg.editing"))}</span><button class="icon-btn" style="width:20px;height:20px">✕</button>`;
+    this.editBar.querySelector("button").addEventListener("click", () => this.setEditing(null));
+    this.input.value = message.text;
+    this.mentions = new Set(message.mentions ?? []);
+    this.renderMentionRow();
+    this.autosize();
+    this.input.focus();
+  }
+
   async send() {
     const s = this.session;
     const text = this.input.value.trim();
-    if (!s || !text) return;
-    const body = { text, mentions: [...this.mentions], replyTo: this.replyTo?.id, whisper: this.whisper.checked };
+    if (!s || (!text && !this.pendingAttachments.length)) return;
+    const body = {
+      text, mentions: [...this.mentions], replyTo: this.replyTo?.id, whisper: this.whisper.checked,
+      attachments: this.pendingAttachments.map((a) => a.hash), editedFrom: this.editingFrom ?? undefined,
+    };
+    const keepAttachments = this.pendingAttachments;
     this.input.value = "";
     this.autosize();
     this.setReply(null);
+    this.setEditing(null);
+    this.pendingAttachments = [];
+    this.renderAttachRow();
     try {
       await post(`/api/sessions/${s.id}/messages`, body);
     } catch (err) {
       this.ctx.toast(err.message, true);
       this.input.value = text;
+      this.pendingAttachments = keepAttachments;
+      this.renderAttachRow();
     }
     this.updatePrivacy();
   }
@@ -209,6 +291,7 @@ export class ChatView {
     const i = this.session.messages.findIndex((x) => x.id === message.id);
     if (i >= 0) this.session.messages[i] = message; else this.session.messages.push(message);
     this.renderMessage(message, true);
+    this.renderPinned();
     this.updatePrivacy();
   }
 
@@ -221,6 +304,7 @@ export class ChatView {
     this.session.messages = this.session.messages.filter((x) => x.id !== messageId);
     this.nodes.get(messageId)?.remove();
     this.nodes.delete(messageId);
+    this.renderPinned();
   }
 
   // ----- rendering -----
@@ -234,6 +318,26 @@ export class ChatView {
     if (force || this.isAtEnd()) this.listEl.scrollTop = this.listEl.scrollHeight;
   }
 
+  scrollTo(messageId) {
+    const node = this.nodes.get(messageId);
+    if (!node) return;
+    node.scrollIntoView({ block: "center" });
+    node.classList.add("highlight");
+    setTimeout(() => node.classList.remove("highlight"), 2000);
+  }
+
+  renderPinned() {
+    const pinned = (this.session?.messages ?? []).filter((m) => m.pinned);
+    this.pinnedStrip.classList.toggle("hidden", !pinned.length);
+    this.pinnedStrip.innerHTML = pinned.length ? `<b>${escapeHtml(t("pinned.title"))}</b>` : "";
+    for (const m of pinned) {
+      const sp = document.createElement("span");
+      sp.textContent = `📌 ${this.nick(m.sender)}: ${m.text.slice(0, 40)}`;
+      sp.addEventListener("click", () => this.scrollTo(m.id));
+      this.pinnedStrip.appendChild(sp);
+    }
+  }
+
   renderMessage(m, live) {
     const existing = this.nodes.get(m.id);
     const node = this.buildNode(m);
@@ -241,6 +345,37 @@ export class ChatView {
     if (existing) existing.replaceWith(node); else this.listEl.appendChild(node);
     this.nodes.set(m.id, node);
     if (live && (atEnd || m.sender === "user")) this.scrollToEnd(true);
+  }
+
+  buildAttachments(m) {
+    const box = document.createElement("div");
+    for (const a of m.attachments ?? []) {
+      if (a.mime.startsWith("image/")) {
+        const img = document.createElement("img");
+        img.className = "att";
+        img.src = attachmentUrl(a.hash);
+        img.alt = a.name;
+        img.addEventListener("click", () => window.open(img.src, "_blank"));
+        box.appendChild(img);
+        const cap = document.createElement("div");
+        cap.className = "att-caption";
+        if (a.caption) {
+          const by = a.captionBy === "ocr" ? "OCR" : a.captionBy;
+          const cost = a.captionCost && a.captionCost.kind === "metered" ? ` · ${formatCost(a.captionCost, this.ctx.settings)}` : "";
+          cap.innerHTML = `<span class="by">${escapeHtml(t("msg.imageBy", { by }))}${escapeHtml(cost)}</span>${escapeHtml(a.caption)}`;
+        } else if (a.captionError) cap.textContent = t("msg.imageError", { err: a.captionError });
+        else cap.textContent = t("msg.imagePending");
+        box.appendChild(cap);
+      } else {
+        const chip = document.createElement("a");
+        chip.className = "file-chip";
+        chip.href = attachmentUrl(a.hash);
+        chip.target = "_blank";
+        chip.innerHTML = `📄 <span>${escapeHtml(a.name)}</span> <span class="size">${fmtSize(a.size)}</span>`;
+        box.appendChild(chip);
+      }
+    }
+    return box;
   }
 
   buildNode(m) {
@@ -261,11 +396,26 @@ export class ChatView {
     sender.className = "sender";
     sender.textContent = isUser ? t("you") : (contact?.nickname ?? m.sender);
     if (m.privateTo?.length) sender.innerHTML += ` <span class="lock" title="${escapeHtml(t("composer.whisperHint"))}">🔒</span>`;
+    if (m.starred) sender.innerHTML += ` <span class="star">★</span>`;
+    if (m.forwardedFrom) {
+      const src = this.ctx.sessions.find((s) => s.id === m.forwardedFrom.sessionId);
+      sender.innerHTML += ` <span class="lock">${escapeHtml(t("msg.forwarded", { title: src?.title ?? "?" }))}</span>`;
+    }
     body.appendChild(sender);
+
+    // A user message superseded by an edit folds away.
+    const supersededBy = isUser && m.excludedFromContext ? this.session.messages.find((x) => x.editedFrom === m.id) : null;
+    if (supersededBy) {
+      const d = document.createElement("details");
+      d.className = "folded";
+      d.innerHTML = `<summary>${escapeHtml(t("msg.foldedOriginal"))}</summary><div class="bubble">${renderMarkdown(m.text)}</div>`;
+      body.appendChild(d);
+      wrap.appendChild(body);
+      return wrap;
+    }
 
     const bubble = document.createElement("div");
     bubble.className = "bubble" + (m.status === "streaming" ? " streaming" : "");
-    // A reply to the message right before it needs no quote block; quotes are for references further back.
     const idx = this.session.messages.findIndex((x) => x.id === m.id);
     const prevId = idx > 0 ? this.session.messages[idx - 1].id : null;
     if (m.replyTo && m.replyTo !== prevId) {
@@ -273,6 +423,7 @@ export class ChatView {
       const qEl = document.createElement("div");
       qEl.className = "quote";
       qEl.textContent = q ? `${this.nick(q.sender)}: ${q.text.slice(0, 120)}` : t("msg.quoteDeleted");
+      if (q) qEl.addEventListener("click", () => this.scrollTo(q.id));
       bubble.appendChild(qEl);
     }
     if (m.reasoning) {
@@ -281,6 +432,7 @@ export class ChatView {
       d.innerHTML = `<summary>💭</summary><div>${escapeHtml(m.reasoning)}</div>`;
       bubble.appendChild(d);
     }
+    if (m.attachments?.length) bubble.appendChild(this.buildAttachments(m));
     const content = document.createElement("div");
     content.className = "content";
     content.innerHTML = renderMarkdown(m.text);
@@ -311,7 +463,8 @@ export class ChatView {
       if (m.latencyMs) bits.push(`<span>${(m.latencyMs / 1000).toFixed(1)}s</span>`);
       if (m.model) bits.push(`<span>${escapeHtml(m.model)}</span>`);
     }
-    if (m.excludedFromContext) bits.push(`<span>${escapeHtml(t("msg.excluded"))}</span>`);
+    if (m.editedFrom) bits.push(`<span>${escapeHtml(t("msg.edited"))}</span>`);
+    if (m.excludedFromContext && !isUser) bits.push(`<span>${escapeHtml(t("msg.excluded"))}</span>`);
     if (m.versions?.length) bits.push(`<span>${m.versions.length} × ${escapeHtml(t("msg.regenerated"))}</span>`);
     const info = document.createElement("span");
     info.innerHTML = bits.join("<span>·</span>");
@@ -334,15 +487,30 @@ export class ChatView {
       box.appendChild(b);
     };
     const s = this.session;
+    const url = (suffix) => `/api/sessions/${s.id}/messages/${m.id}${suffix}`;
     if (m.status === "streaming") {
-      btn("■", t("action.stop"), () => post(`/api/sessions/${s.id}/messages/${m.id}/cancel`));
+      btn("■", t("action.stop"), () => post(url("/cancel")));
       return box;
     }
     btn("↩", t("action.reply"), () => this.setReply(m));
     btn("⎘", t("action.copy"), async () => { try { await navigator.clipboard.writeText(m.text); this.ctx.toast(t("toast.copied")); } catch { /* ignore */ } });
-    if (m.sender !== "user") btn("↻", t("action.regenerate"), () => post(`/api/sessions/${s.id}/messages/${m.id}/regenerate`).catch((e) => this.ctx.toast(e.message, true)));
-    if (s.kind === "group") btn(m.excludedFromContext ? "👁" : "🙈", m.excludedFromContext ? t("action.include") : t("action.exclude"), () => patch(`/api/sessions/${s.id}/messages/${m.id}`, { excludedFromContext: !m.excludedFromContext }));
-    btn("✕", t("action.delete"), () => del(`/api/sessions/${s.id}/messages/${m.id}`));
+    if (m.sender === "user") btn("✎", t("action.edit"), () => this.setEditing(m));
+    else btn("↻", t("action.regenerate"), () => post(url("/regenerate")).catch((e) => this.ctx.toast(e.message, true)));
+    btn(m.starred ? "★" : "☆", m.starred ? t("action.unstar") : t("action.star"), () => patch(url(""), { starred: !m.starred }));
+    btn(m.pinned ? "📍" : "📌", m.pinned ? t("action.unpin") : t("action.pin"), () => patch(url(""), { pinned: !m.pinned }));
+    btn("➦", t("action.forward"), () => this.forwardDialog(m));
+    if (s.kind === "group") btn(m.excludedFromContext ? "👁" : "🙈", m.excludedFromContext ? t("action.include") : t("action.exclude"), () => patch(url(""), { excludedFromContext: !m.excludedFromContext }));
+    btn("✕", t("action.delete"), () => del(url("")));
     return box;
+  }
+
+  forwardDialog(m) {
+    const others = this.ctx.sessions.filter((s) => s.id !== this.session.id);
+    const html = `<div class="pick-list">${others.map((s) => `<div class="pick-row" data-id="${s.id}"><span class="grow">${escapeHtml(s.title)}</span></div>`).join("") || `<div class="hint" style="padding:10px">—</div>`}</div>`;
+    const { modal, close } = openModal(this.ctx, { title: t("forward.title"), bodyHtml: html, buttons: [{ label: t("action.cancel") }] });
+    modal.querySelectorAll(".pick-row").forEach((row) => row.addEventListener("click", async () => {
+      try { await post(`/api/sessions/${this.session.id}/messages/${m.id}/forward`, { targetSessionId: row.dataset.id }); this.ctx.toast(t("toast.saved")); } catch (e) { this.ctx.toast(e.message, true); }
+      close();
+    }));
   }
 }

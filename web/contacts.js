@@ -3,34 +3,13 @@ import { t } from "./i18n.js";
 import { escapeHtml } from "./markdown.js";
 import { get, post, patch, del } from "./api.js";
 import { avatarEl } from "./chat.js";
+import { openModal } from "./modal.js";
+export { openModal };
 
 const DEFAULT_URLS = { openai: "https://api.deepseek.com/v1", anthropic: "https://api.anthropic.com", ollama: "http://127.0.0.1:11434", cli: "" };
 
 function field(label, inputHtml, hint) {
   return `<div class="field"><label>${escapeHtml(label)}</label>${inputHtml}${hint ? `<div class="hint">${escapeHtml(hint)}</div>` : ""}</div>`;
-}
-
-export function openModal(ctx, { title, bodyHtml, wide, buttons, onOpen }) {
-  const root = document.getElementById("modal-root");
-  const modal = document.createElement("div");
-  modal.className = "modal" + (wide ? " wide" : "");
-  modal.innerHTML = `<div class="modal-head"><span>${escapeHtml(title)}</span><button class="icon-btn" data-close>✕</button></div><div class="modal-body">${bodyHtml}</div><div class="modal-foot"></div>`;
-  const foot = modal.querySelector(".modal-foot");
-  const close = () => { modal.remove(); };
-  for (const b of buttons ?? []) {
-    const el = document.createElement("button");
-    el.className = "btn " + (b.primary ? "primary" : b.danger ? "danger" : "");
-    el.textContent = b.label;
-    el.addEventListener("click", async () => {
-      el.disabled = true;
-      try { const keep = await b.onClick?.(modal, close); if (keep !== true) close(); } catch (err) { ctx.toast(err.message, true); } finally { el.disabled = false; }
-    });
-    foot.appendChild(el);
-  }
-  modal.querySelector("[data-close]").addEventListener("click", close);
-  root.appendChild(modal);
-  onOpen?.(modal, close);
-  return { modal, close };
 }
 
 export function openContacts(ctx) {

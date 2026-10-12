@@ -2,6 +2,14 @@
 // The direct (one-to-one) variant drops the group rules; see docs/设计方案.md section 6.
 import { type Contact, type Member, type Message, type Session, DESKDOCK_CONTACT_ID, estimateTokens } from "./models.js";
 import type { ChatMessage } from "./providers/types.js";
+import { attachmentText } from "./attachments.js";
+
+/** What a model reads for one message: the text plus inlined file contents and image captions. */
+export function messageText(m: Message, lang: "zh" | "en"): string {
+  if (!m.attachments?.length) return m.text;
+  const parts = [m.text.trim(), ...m.attachments.map((a) => attachmentText(a, lang))].filter(Boolean);
+  return parts.join("\n\n");
+}
 
 export interface BuiltContext {
   system: string;
@@ -89,7 +97,7 @@ export function buildContext(session: Session, self: Contact, member: Member | u
   let tokens = 0;
   for (let i = eligible.length - 1; i >= 0; i--) {
     const m = eligible[i];
-    const tk = estimateTokens(m.text.slice(0, maxChars)) + 4;
+    const tk = estimateTokens(messageText(m, opts.lang).slice(0, maxChars)) + 4;
     if (window.length >= session.context.recentCount || (window.length > 0 && tokens + tk > session.context.recentTokens)) break;
     window.unshift(m);
     tokens += tk;
@@ -111,11 +119,12 @@ export function buildContext(session: Session, self: Contact, member: Member | u
   const quotedId = opts.trigger?.replyTo;
   if (quotedId && !window.some((m) => m.id === quotedId)) {
     const q = session.messages.find((m) => m.id === quotedId);
-    if (q) push("user", `${t.quotedHead}\n[${nick(q.sender)}]: ${q.text}`);
+    if (q) push("user", `${t.quotedHead}\n[${nick(q.sender)}]: ${messageText(q, opts.lang)}`);
   }
 
   for (const m of window) {
-    const text = m.text.length > maxChars && m.id !== quotedId ? m.text.slice(0, maxChars) + t.truncated : m.text;
+    const full = messageText(m, opts.lang);
+    const text = full.length > maxChars && m.id !== quotedId ? full.slice(0, maxChars) + t.truncated : full;
     if (m.sender === self.id) push("assistant", text);
     else if (session.kind === "direct" && m.sender === "user") push("user", text);
     else push("user", `[${nick(m.sender)}]: ${text}`);
@@ -135,8 +144,32 @@ function includeInHistory(m: Message, selfId: string): boolean {
   if (m.status !== "done") return false;
   if (m.excludedFromContext) return false;
   if (m.privateTo && !m.privateTo.includes(selfId) && m.sender !== selfId) return false;
-  if (!m.text.trim()) return false;
+  if (!m.text.trim() && !m.attachments?.length) return false;
   return true;
+}
+
+/** Eligibility for the shared summary: what every member may see. */
+export function includeInSummary(m: Message): boolean {
+  return includeInHistory(m, "") && !m.privateTo;
+}
+
+/** Messages the rolling summary should cover: shared history older than the recent window. */
+export function summaryCandidates(session: Session, lang: "zh" | "en"): { pending: Message[]; windowFirstSeq: number } {
+  const eligible = session.messages.filter(includeInSummary);
+  let count = 0;
+  let tokens = 0;
+  let windowFirstSeq = Number.MAX_SAFE_INTEGER;
+  for (let i = eligible.length - 1; i >= 0; i--) {
+    const m = eligible[i];
+    const tk = estimateTokens(messageText(m, lang).slice(0, 1500)) + 4;
+    if (count >= session.context.recentCount || (count > 0 && tokens + tk > session.context.recentTokens)) break;
+    windowFirstSeq = m.seq;
+    count++;
+    tokens += tk;
+  }
+  const covered = session.summary && !session.summary.dirty ? session.summary.coversUpToSeq : 0;
+  const pending = eligible.filter((m) => m.seq > covered && m.seq < windowFirstSeq);
+  return { pending, windowFirstSeq };
 }
 
 /** Strips a self-prefix the model added and cuts the reply where it starts speaking as another member. */

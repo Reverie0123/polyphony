@@ -19,6 +19,21 @@ export function setToken(t) {
   token = t;
 }
 
+export function getToken() {
+  return token;
+}
+
+/** Uploads one File; resolves to the attachment record. */
+export async function uploadFile(file) {
+  const data = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+  return post("/api/upload", { name: file.name, mime: file.type, data });
+}
+
 export class ApiError extends Error {
   constructor(status, body) {
     super(body?.error || `HTTP ${status}`);

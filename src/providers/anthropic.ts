@@ -94,8 +94,18 @@ export const chatAnthropic: ChatFn = async function* (ctx, req) {
     model: req.model,
     max_tokens: req.maxTokens ?? 8192,
     stream: true,
-    messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+    messages: req.messages.map((m) => ({ role: m.role, content: m.content as unknown })),
   };
+  if (req.images?.length) {
+    const msgs = body.messages as { role: string; content: unknown }[];
+    const last = [...msgs].reverse().find((m) => m.role === "user");
+    if (last) {
+      last.content = [
+        ...req.images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.mime, data: im.data } })),
+        { type: "text", text: String(last.content) },
+      ];
+    }
+  }
   if (req.system) {
     body.system = req.cacheSystem === false ? req.system : [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }];
   }

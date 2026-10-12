@@ -18,7 +18,9 @@
           <button class="icon-btn" id="btn-settings" data-i18n-title="action.settings" title="设置">⚙</button>
         </div>
       </div>
+      <div class="search-box"><input id="search" type="search" data-i18n-placeholder="search.placeholder" placeholder="搜索消息"></div>
       <div class="session-list" id="session-list"></div>
+      <div class="session-list hidden" id="search-results"></div>
       <div class="sidebar-foot" id="sidebar-foot"></div>
     </aside>
 
@@ -44,12 +46,17 @@
             <button class="icon-btn" id="btn-panel" data-i18n-title="action.panel" title="成员与费用">☰</button>
           </div>
         </header>
+        <div class="pinned-strip hidden" id="pinned-strip"></div>
         <div class="messages" id="messages"></div>
         <footer class="composer">
           <div class="privacy-line" id="privacy-line"></div>
           <div class="mention-row hidden" id="mention-row"></div>
           <div class="reply-bar hidden" id="reply-bar"></div>
+          <div class="reply-bar edit-bar hidden" id="edit-bar"></div>
+          <div class="attach-row hidden" id="attach-row"></div>
           <div class="composer-row">
+            <button class="icon-btn" id="btn-attach" data-i18n-title="action.attach" title="附件">📎</button>
+            <input type="file" id="file-input" multiple hidden>
             <textarea id="input" rows="2" data-i18n-placeholder="composer.placeholder" placeholder="输入消息，群聊里用 @ 点名；Enter 发送，Shift+Enter 换行"></textarea>
             <div class="composer-actions">
               <label class="whisper hidden" id="whisper-label" data-i18n-title="composer.whisperHint" title="只给被 @ 的人看，不进群历史">

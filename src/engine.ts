@@ -4,6 +4,7 @@ import {
   type Contact, type Message, type Session, type Usage, type Cost, type Settings,
   ZERO_USAGE, estimateTokens, DESKDOCK_CONTACT_ID,
 } from "./models.js";
+import { messageText } from "./context.js";
 import { Store } from "./store.js";
 import { Pricing, computeCost } from "./pricing.js";
 import { buildContext, cleanReply } from "./context.js";
@@ -11,24 +12,77 @@ import { getChatFn, ProviderError, type ChatRequest } from "./providers/index.js
 
 export type Broadcast = (event: string, data: unknown) => void;
 
+export interface CallResult { text: string; usage: Usage; cost: Cost; model: string }
+export interface CallMeta { purpose: "summary" | "vision" | "host"; sessionId: string; messageId?: string }
+/** A plain, non-streaming call to one contact, used by background helpers (secretary, vision). Records the ledger. */
+export type CallContact = (contact: Contact, req: Omit<ChatRequest, "signal">, meta: CallMeta) => Promise<CallResult>;
+
 export interface EngineDeps {
   store: Store;
   pricing: Pricing;
   broadcast: Broadcast;
   lang: () => "zh" | "en";
+  /** Called after every finished reply (done, error or cancelled); the summariser hooks in here. */
+  afterReply?: (session: Session, message: Message) => void;
 }
 
 export class Engine {
   private running = 0;
   private waiting: (() => void)[] = [];
   private active = new Map<string, AbortController>();
+  private background = 0;
 
   constructor(private deps: EngineDeps) {}
 
-  /** Number of in-flight replies; the auto-exit timer stays quiet while this is above zero. */
-  get busy(): number {
-    return this.active.size;
+  set afterReply(fn: EngineDeps["afterReply"]) {
+    this.deps.afterReply = fn;
   }
+
+  /** Number of in-flight replies and background calls; the auto-exit timer stays quiet while this is above zero. */
+  get busy(): number {
+    return this.active.size + this.background;
+  }
+
+  /** Non-streaming call for background helpers. Throws ProviderError on failure. */
+  callContact: CallContact = async (contact, req, meta) => {
+    const { store, pricing } = this.deps;
+    const account = store.getAccount(contact.accountId);
+    if (!account || !account.enabled) throw new ProviderError("account missing or disabled", "not_found");
+    const chat = getChatFn(account);
+    if (!chat) throw new ProviderError(`no provider for ${account.provider}`, "not_found");
+    const settings = store.getSettings();
+    this.background++;
+    try {
+      return await this.slot(async () => {
+        let text = "";
+        let usage: Usage | undefined;
+        let model = contact.model;
+        let usageMissing = false;
+        for await (const ev of chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, { ...req, signal: AbortSignal.timeout(600000) })) {
+          if (ev.type === "delta") text += ev.text;
+          else if (ev.type === "usage") usage = ev.usage;
+          else if (ev.type === "status" && ev.text === "usage-missing") usageMissing = true;
+          else if (ev.type === "done" && ev.model) model = ev.model;
+        }
+        if (!usage || usageMissing) {
+          usage = { ...ZERO_USAGE, input: estimateTokens(req.system + req.messages.map((m) => m.content).join("")), output: estimateTokens(text), estimated: true };
+        }
+        const cost = computeCost(account.provider, usage, pricing.lookup(account.provider, contact.model), settings.usdToCny);
+        if (usage.input + usage.output > 0) {
+          store.appendLedger({
+            at: new Date().toISOString(), sessionId: meta.sessionId, messageId: meta.messageId ?? "", contactId: contact.id, accountId: account.id,
+            provider: account.provider, model, usage, cost, purpose: meta.purpose,
+          });
+          const s = store.getSession(meta.sessionId);
+          if (s) { s.spentTotal += cost.usd; store.saveSession(s); }
+          this.deps.broadcast("ledger.updated", { sessionId: meta.sessionId });
+        }
+        return { text, usage, cost, model };
+      });
+    } finally {
+      this.background--;
+    }
+  };
 
   cancel(messageId: string): boolean {
     const c = this.active.get(messageId);
@@ -77,6 +131,7 @@ export class Engine {
       msg.error = { code, message };
       store.saveSession(session);
       broadcast("message.done", { sessionId: session.id, message: msg });
+      try { this.deps.afterReply?.(session, msg); } catch (err) { console.error(err); }
       return msg;
     };
 
@@ -202,6 +257,7 @@ export class Engine {
       broadcast("ledger.updated", { sessionId: session.id });
     }
     broadcast("message.done", { sessionId: session.id, message: msg });
+    try { this.deps.afterReply?.(session, msg); } catch (err) { console.error(err); }
     return msg;
   }
 
@@ -217,6 +273,11 @@ export class Engine {
     const provider = account?.provider ?? "openai";
     const cost = computeCost(provider, { ...ZERO_USAGE, input: built.info.tokensEstimate, output: 400, estimated: true }, pricing.lookup(provider, contact.model), settings.usdToCny);
     return { tokens: built.info.tokensEstimate, cost, historyCount: built.info.historyCount, summaryUsed: built.info.summaryUsed };
+  }
+
+  /** Text of a message as models see it (used by export). */
+  textOf(m: Message): string {
+    return messageText(m, this.deps.lang());
   }
 }
 
