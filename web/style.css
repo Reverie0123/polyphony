@@ -245,3 +245,13 @@ table.pricing input { width: 70px; padding: 2px 4px; border: 1px solid var(--lin
 .role-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .role-row .avatar { flex-shrink: 0; }
 .role-row textarea { flex: 1; min-height: 44px; font-size: 12.5px; }
+
+/* ----- phase 4: DeskDock steps ----- */
+.steps { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
+.step { font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: rgba(0,0,0,.03); }
+.step summary { cursor: pointer; display: flex; gap: 6px; align-items: center; }
+.step .tool { font-family: var(--mono); font-weight: 600; }
+.step .ok { color: var(--ok); }
+.step .fail { color: var(--danger); }
+.step .args, .step .result { white-space: pre-wrap; color: var(--text-2); margin-top: 4px; font-family: var(--mono); font-size: 11.5px; max-height: 160px; overflow: auto; }
+.step.running summary::after { content: "…"; animation: blink 1s infinite; }

@@ -79,6 +79,20 @@ export class Panel {
       info.className = "info";
       const a = c ? this.ctx.accounts.find((x) => x.id === c.accountId) : null;
       info.innerHTML = `<div class="name">${escapeHtml(c?.nickname ?? m.contactId)}</div><div class="desc">${escapeHtml(c?.id === "deskdock" ? t("deskdock") : `${a?.name ?? ""} · ${c?.model ?? ""}`)}</div>`;
+      if (m.contactId === "deskdock") {
+        const sel = document.createElement("select");
+        const ds = this.ctx.contacts.filter((x) => x.enabled && x.id !== "deskdock" && x.supportsTools && this.ctx.accounts.find((a) => a.id === x.accountId)?.provider !== "cli");
+        sel.innerHTML = `<option value="">${escapeHtml(t("dd.driverNone"))}</option>` + ds.map((x) => `<option value="${x.id}" ${m.driverContactId === x.id ? "selected" : ""}>${escapeHtml(x.nickname)}</option>`).join("");
+        sel.title = t("dd.driver");
+        sel.style.marginTop = "6px";
+        sel.addEventListener("change", async () => {
+          const members = s.members.map((x) => (x.contactId === "deskdock" ? { ...x, driverContactId: sel.value || undefined } : x));
+          const updated = await patch(`/api/sessions/${s.id}`, { members });
+          this.ctx.onSessionPatched(updated);
+          this.ctx.toast(t("toast.saved"));
+        });
+        info.appendChild(sel);
+      }
       if (s.kind === "group") {
         const ta = document.createElement("textarea");
         ta.rows = 3;

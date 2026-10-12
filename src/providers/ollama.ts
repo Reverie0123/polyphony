@@ -34,9 +34,15 @@ export function parseOllamaLine(line: string): ChatEvent[] {
 
 export const chatOllama: ChatFn = async function* (ctx, req) {
   const base = (ctx.account.baseURL || "http://127.0.0.1:11434").replace(/\/+$/, "");
-  const messages: { role: string; content: string; images?: string[] }[] = [];
+  const messages: { role: string; content: string; images?: string[]; tool_calls?: unknown }[] = [];
   if (req.system) messages.push({ role: "system", content: req.system });
-  for (const m of req.messages) messages.push({ role: m.role, content: m.content });
+  for (const m of req.messages) {
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      messages.push({ role: "assistant", content: m.content, tool_calls: m.toolCalls.map((c) => { let a: unknown = {}; try { a = c.args ? JSON.parse(c.args) : {}; } catch { a = {}; } return { function: { name: c.name, arguments: a } }; }) });
+    } else if (m.role === "tool") {
+      messages.push({ role: "tool", content: m.content, images: m.images?.map((im) => im.data) });
+    } else messages.push({ role: m.role, content: m.content });
+  }
   if (req.images?.length) {
     const last = [...messages].reverse().find((m) => m.role === "user");
     if (last) last.images = req.images.map((im) => im.data);

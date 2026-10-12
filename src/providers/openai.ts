@@ -71,9 +71,18 @@ export function parseOpenAIChunk(json: string, toolBuf: Map<number, { id: string
 
 export const chatOpenAI: ChatFn = async function* (ctx, req) {
   const base = ctx.account.baseURL.replace(/\/+$/, "");
-  const messages: { role: string; content: unknown }[] = [];
+  const messages: { role: string; content: unknown; tool_calls?: unknown; tool_call_id?: string }[] = [];
   if (req.system) messages.push({ role: "system", content: req.system });
-  for (const m of req.messages) messages.push({ role: m.role, content: m.content });
+  for (const m of req.messages) {
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      messages.push({ role: "assistant", content: m.content || null, tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.args || "{}" } })) });
+    } else if (m.role === "tool") {
+      const content: unknown = m.images?.length
+        ? [{ type: "text", text: m.content }, ...m.images.map((im) => ({ type: "image_url", image_url: { url: `data:${im.mime};base64,${im.data}` } }))]
+        : m.content;
+      messages.push({ role: "tool", tool_call_id: m.toolCallId ?? "", content });
+    } else messages.push({ role: m.role, content: m.content });
+  }
   if (req.images?.length) {
     // Images ride on the last user message as a content array.
     const last = [...messages].reverse().find((m) => m.role === "user");

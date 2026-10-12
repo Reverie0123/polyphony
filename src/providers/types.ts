@@ -1,9 +1,22 @@
 // One interface for every way of reaching a model. A provider turns a request into an async stream of events.
 import type { Account, Usage } from "../models.js";
 
+export interface ToolCall {
+  id: string;
+  name: string;
+  /** JSON text of the arguments. */
+  args: string;
+}
+
 export interface ChatMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
+  /** Assistant turns that requested tools. */
+  toolCalls?: ToolCall[];
+  /** Tool turns: which call this result answers. */
+  toolCallId?: string;
+  /** Images inside a tool result (screenshots), sent only to vision-capable models. */
+  images?: ImageInput[];
 }
 
 export interface ToolDef {

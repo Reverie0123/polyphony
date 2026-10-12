@@ -131,6 +131,11 @@ function openSettings() {
     <label class="check"><input type="checkbox" id="s-cli" ${s.cliEnabled ? "checked" : ""}> ${escapeHtml(t("settings.cliEnabled"))}</label>
     <label class="check"><input type="checkbox" id="s-lan" ${s.lanAccess ? "checked" : ""}> ${escapeHtml(t("settings.lan"))}</label>
     ${lanInfo}
+    <div class="section-title">${escapeHtml(t("dd.title"))}</div>
+    <div id="s-dd-status" class="hint"></div>
+    ${f(t("dd.command"), `<input id="s-dd-cmd" value="${escapeHtml(s.deskdockCommand ?? "")}">`)}
+    <div class="row" style="margin:4px 0 10px"><button class="btn sm" id="s-dd-connect">${escapeHtml(t("dd.connect"))}</button><button class="btn sm" id="s-dd-restart">${escapeHtml(t("dd.restart"))}</button><button class="btn sm" id="s-dd-install">${escapeHtml(t("dd.install"))}</button></div>
+    <pre id="s-dd-log" class="hint hidden" style="max-height:120px;overflow:auto;white-space:pre-wrap"></pre>
     <div class="section-title">${escapeHtml(t("settings.pricing"))}</div>
     <div class="hint">${escapeHtml(t("settings.pricingHint"))}</div>
     <div class="row" style="margin:8px 0"><button class="btn sm" id="s-refresh">${escapeHtml(t("settings.refreshPricing"))}</button><span class="hint" id="s-fetched"></span></div>
@@ -151,7 +156,7 @@ function openSettings() {
             lang: q("#s-lang").value, theme: q("#s-theme").value, currency: q("#s-currency").value,
             usdToCny: Number(q("#s-rate").value) || 7.2, costWarn: Number(q("#s-warn").value), costAlert: Number(q("#s-alert").value),
             autoExitMinutes: Number(q("#s-exit").value), concurrency: Number(q("#s-conc").value) || 4,
-            cliEnabled: q("#s-cli").checked, lanAccess: q("#s-lan").checked,
+            cliEnabled: q("#s-cli").checked, lanAccess: q("#s-lan").checked, deskdockCommand: q("#s-dd-cmd").value.trim(),
           });
           await ctx.reload();
           if (current) { updateHeader(); chat.open(current); }
@@ -177,6 +182,23 @@ function openSettings() {
           load();
         }));
       };
+      const ddStatus = modal.querySelector("#s-dd-status");
+      const showDd = (st) => {
+        const parts = [st.installed ? t("dd.status.installed", { cmd: st.command }) : t("dd.status.missing"), st.running ? t("dd.status.running", { n: st.toolCount }) : t("dd.status.idle")];
+        if (st.error) parts.push(st.error);
+        ddStatus.textContent = parts.join(" · ");
+      };
+      get("/api/deskdock/status").then(showDd).catch(() => {});
+      modal.querySelector("#s-dd-connect").addEventListener("click", async (e) => {
+        const btn = e.currentTarget; btn.disabled = true;
+        try { await patch("/api/settings", { deskdockCommand: modal.querySelector("#s-dd-cmd").value.trim() }); showDd(await post("/api/deskdock/connect")); } catch (err) { ctx.toast(err.message, true); } finally { btn.disabled = false; }
+      });
+      modal.querySelector("#s-dd-restart").addEventListener("click", async () => showDd(await post("/api/deskdock/restart")));
+      modal.querySelector("#s-dd-install").addEventListener("click", async (e) => {
+        const btn = e.currentTarget; btn.disabled = true; btn.textContent = t("dd.installing");
+        const log = modal.querySelector("#s-dd-log"); log.classList.remove("hidden"); log.textContent = "";
+        try { const r = await post("/api/deskdock/install"); log.textContent = r.log; showDd(await get("/api/deskdock/status")); if (!r.ok) ctx.toast(t("err.unknown"), true); } catch (err) { ctx.toast(err.message, true); } finally { btn.disabled = false; btn.textContent = t("dd.install"); }
+      });
       modal.querySelector("#s-refresh").addEventListener("click", async (e) => { e.currentTarget.disabled = true; try { await post("/api/pricing/refresh"); await load(); } finally { e.currentTarget.disabled = false; } });
       await load();
     },
@@ -196,6 +218,7 @@ function wireEvents() {
     "message.updated": ({ sessionId, message }) => chat.onUpdated(sessionId, message),
     "message.deleted": ({ sessionId, messageId }) => chat.onDeleted(sessionId, messageId),
     "ledger.updated": () => panel.refreshCost(),
+    "deskdock.install": ({ line }) => { const log = document.getElementById("s-dd-log"); if (log) { log.textContent += line; log.scrollTop = log.scrollHeight; } },
     "discussion.round": ({ sessionId, round }) => { if (current?.id === sessionId && current.discussion) { current.discussion.currentRound = round; renderDiscBar(ctx, current); } },
     "session.created": ({ session }) => { if (!ctx.sessions.some((s) => s.id === session.id)) { ctx.sessions.unshift(session); renderSessionList(); } },
     "session.updated": ({ session }) => ctx.onSessionPatched(session),
@@ -224,7 +247,7 @@ async function boot() {
     return;
   }
   wireEvents();
-  document.getElementById("btn-new").addEventListener("click", () => openNewSession(ctx, (s) => { ctx.sessions.unshift({ ...s, lastMessage: "" }); openSession(s.id); }));
+  document.getElementById("btn-new").addEventListener("click", () => openNewSession(ctx, (s) => { if (!ctx.sessions.some((x) => x.id === s.id)) ctx.sessions.unshift({ ...s, lastMessage: "" }); openSession(s.id); }));
   document.getElementById("empty-new").addEventListener("click", () => document.getElementById("btn-new").click());
   document.getElementById("btn-contacts").addEventListener("click", () => openContacts(ctx));
   document.getElementById("empty-contacts").addEventListener("click", () => openContacts(ctx));

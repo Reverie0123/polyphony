@@ -194,12 +194,17 @@ function openContactForm(ctx, contact, done) {
   });
 }
 
+function drivers(ctx) {
+  return ctx.contacts.filter((c) => c.enabled && c.id !== "deskdock" && c.supportsTools && ctx.accounts.find((a) => a.id === c.accountId)?.provider !== "cli");
+}
+
 export function openNewSession(ctx, onCreated) {
   const contacts = ctx.contacts.filter((c) => c.enabled);
   if (!contacts.length) { ctx.toast(t("new.noContacts"), true); return openContacts(ctx); }
   const html = `
     ${field(t("new.kind"), `<select id="n-kind"><option value="direct">${escapeHtml(t("new.direct"))}</option><option value="group">${escapeHtml(t("new.group"))}</option></select>`)}
     <div class="field"><label>${escapeHtml(t("new.pick"))}</label><div class="pick-list" id="n-pick">${contacts.map((c) => `<div class="pick-row" data-id="${c.id}"><span class="avatar sm ${c.id === "deskdock" ? "deskdock" : ""}">${escapeHtml((c.avatar || c.nickname).slice(0, 2))}</span><span class="grow">${escapeHtml(c.nickname)}</span><span class="hint">${escapeHtml(c.model)}</span></div>`).join("")}</div></div>
+    <div id="n-driver-field" class="field hidden"><label>${escapeHtml(t("dd.driver"))}</label><select id="n-driver">${drivers(ctx).map((c) => `<option value="${c.id}">${escapeHtml(c.nickname)}</option>`).join("")}</select></div>
     <div id="n-group-fields" class="hidden">
       ${field(t("disc.template"), `<select id="n-template"><option value="">${escapeHtml(t("disc.templateNone"))}</option>${templates().map((tp) => `<option value="${tp.id}">${escapeHtml(tp.name)} · ${escapeHtml(tp.hint)}</option>`).join("")}</select>`, t("disc.applyHint"))}
       ${field(t("session.title"), `<input id="n-title" placeholder="">`)}
@@ -222,7 +227,8 @@ export function openNewSession(ctx, onCreated) {
           const q = (id) => modal.querySelector(id);
           const kind = q("#n-kind").value;
           const tp = templates().find((x) => x.id === q("#n-template").value);
-          const members = [...picked].map((contactId, i) => ({ contactId, roleCard: tp?.roles[i] ?? "" }));
+          const driverId = q("#n-driver").value;
+          const members = [...picked].map((contactId, i) => ({ contactId, roleCard: tp?.roles[i] ?? "", driverContactId: contactId === "deskdock" ? driverId : undefined }));
           if (!members.length) throw new Error(t("new.pick"));
           const body = { kind, members, title: q("#n-title").value.trim(), intro: q("#n-intro").value || (kind === "group" && tp ? tp.intro : "") };
           const perRound = Number(q("#n-per-round").value);
@@ -245,7 +251,7 @@ export function openNewSession(ctx, onCreated) {
       });
       const sync = () => modal.querySelector("#n-group-fields").classList.toggle("hidden", kindSel.value !== "group");
       kindSel.addEventListener("change", () => { if (kindSel.value === "direct" && picked.size > 1) { const first = [...picked][0]; picked.clear(); picked.add(first); paint(); } sync(); });
-      const paint = () => { for (const r of pick.querySelectorAll(".pick-row")) r.classList.toggle("on", picked.has(r.dataset.id)); };
+      const paint = () => { for (const r of pick.querySelectorAll(".pick-row")) r.classList.toggle("on", picked.has(r.dataset.id)); modal.querySelector("#n-driver-field").classList.toggle("hidden", !picked.has("deskdock")); };
       pick.addEventListener("click", (e) => {
         const row = e.target.closest(".pick-row");
         if (!row) return;

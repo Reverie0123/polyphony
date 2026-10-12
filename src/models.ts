@@ -238,6 +238,8 @@ export interface Settings {
   checkUpdates: boolean;
   cliEnabled: boolean;
   concurrency: number;
+  /** Path to the deskdock executable or its dist/index.js; empty means look on PATH. */
+  deskdockCommand: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -256,6 +258,7 @@ export const DEFAULT_SETTINGS: Settings = {
   checkUpdates: true,
   cliEnabled: false,
   concurrency: 4,
+  deskdockCommand: "",
 };
 
 export const DEFAULT_CONTEXT: ContextConfig = { recentCount: 12, recentTokens: 6000 };

@@ -17,6 +17,8 @@ export interface OrchestratorDeps {
   engine: Engine;
   broadcast: Broadcast;
   lang: () => "zh" | "en";
+  /** Runs the DeskDock member for a trigger message (set when DeskDock is wired in). */
+  runDeskdock?: (session: Session, trigger: Message) => Promise<Message>;
   /** Test hook: shortens the gap between rounds. */
   gapMs?: (session: Session) => number;
 }
@@ -334,17 +336,18 @@ export class Orchestrator {
   async onReply(session: Session, m: Message): Promise<void> {
     if (session.kind !== "group" || m.sender === "user" || m.sender === "system" || m.status !== "done") return;
     const members = session.members.map((x) => ({ contactId: x.contactId, nickname: this.nick(x.contactId) }));
-    const targets = parseMentionsIn(m.text, members).filter((id) => id !== m.sender && id !== DESKDOCK_CONTACT_ID);
+    const targets = parseMentionsIn(m.text, members).filter((id) => id !== m.sender && (id !== DESKDOCK_CONTACT_ID || this.deps.runDeskdock));
     if (!targets.length) return;
     const budget = this.mentionBudget.get(session.id) ?? new Set<string>();
     this.mentionBudget.set(session.id, budget);
     for (const to of targets) {
       if (budget.has(to)) continue;
       budget.add(to);
-      if (session.allowModelMentions) {
+      if (session.allowModelMentions && to !== DESKDOCK_CONTACT_ID) {
         this.notice(session, this.t().mentionAuto(this.nick(m.sender), this.nick(to)));
         await this.deps.engine.reply(session, to, m, { instruction: this.t().mentionTurn(this.nick(m.sender)) });
       } else {
+        // DeskDock always asks: a model must never operate the computer without the user's click.
         this.notice(session, this.t().mentionAsk(this.nick(m.sender), this.nick(to)), {
           action: { type: "mention", id: newId("mn_"), from: m.sender, to, sourceMessageId: m.id, status: "pending" },
         });
@@ -362,7 +365,8 @@ export class Orchestrator {
     this.deps.broadcast("message.updated", { sessionId: session.id, message: card });
     if (approve) {
       const source = session.messages.find((x) => x.id === card.action!.sourceMessageId);
-      await this.deps.engine.reply(session, card.action.to, source, { instruction: this.t().mentionTurn(this.nick(card.action.from)) });
+      if (card.action.to === DESKDOCK_CONTACT_ID) { if (source && this.deps.runDeskdock) await this.deps.runDeskdock(session, source); }
+      else await this.deps.engine.reply(session, card.action.to, source, { instruction: this.t().mentionTurn(this.nick(card.action.from)) });
     }
     return true;
   }

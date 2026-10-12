@@ -12,6 +12,7 @@ import { Attachments, isImage } from "./attachments.js";
 import { Vision } from "./vision.js";
 import { Summarizer } from "./summary.js";
 import { Orchestrator } from "./orchestrator.js";
+import { DeskDock, parseDriverOverride } from "./deskdock.js";
 import { parseMentionsIn } from "./mentions.js";
 import { discoverModels } from "./providers/discover.js";
 import { ProviderError } from "./providers/index.js";
@@ -25,6 +26,7 @@ export interface ServerOptions {
   vision: Vision;
   summarizer: Summarizer;
   orchestrator: Orchestrator;
+  deskdock: DeskDock;
   token: string;
   lanToken?: string;
   version: string;
@@ -104,7 +106,7 @@ function safeEqual(a: string, b: string): boolean {
 export { parseMentionsIn as parseMentions } from "./mentions.js";
 
 export function createApp(opts: ServerOptions): { server: http.Server; hub: SseHub } {
-  const { store, pricing, engine, attachments, vision, summarizer, orchestrator } = opts;
+  const { store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock } = opts;
   const webDir = opts.webDir ?? defaultWebDir();
   const hub = new SseHub(opts.onClients);
 
@@ -223,6 +225,14 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
       results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       return json(res, 200, { results });
     }
+
+    // ----- deskdock -----
+    if (p === "/api/deskdock/status" && method === "GET") return json(res, 200, deskdock.status());
+    if (p === "/api/deskdock/connect" && method === "POST") {
+      try { await deskdock.ensureClient(); return json(res, 200, deskdock.status()); } catch (e) { return json(res, 502, { ...deskdock.status(), error: (e as Error).message }); }
+    }
+    if (p === "/api/deskdock/restart" && method === "POST") { deskdock.restart(); return json(res, 200, deskdock.status()); }
+    if (p === "/api/deskdock/install" && method === "POST") return json(res, 200, await deskdock.install());
 
     // ----- settings -----
     if (p === "/api/settings" && method === "PATCH") {
@@ -396,11 +406,14 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         hub.broadcast("message.created", { sessionId: s.id, message: userMsg });
         // Replies run after the response is sent; the page follows them over SSE. Image captions come first so the
         // mentioned models see them.
+        const deskNick = store.getContact(DESKDOCK_CONTACT_ID)?.nickname ?? "DeskDock";
+        const overrideNick = parseDriverOverride(text, deskNick);
+        const driverOverride = overrideNick ? store.listContacts().find((c) => c.nickname === overrideNick && c.id !== DESKDOCK_CONTACT_ID)?.id : undefined;
         const run = async () => {
           await vision.describe(s, userMsg);
           for (const contactId of mentions) {
-            if (contactId === DESKDOCK_CONTACT_ID) continue;
-            await engine.reply(s, contactId, userMsg);
+            if (contactId === DESKDOCK_CONTACT_ID) await deskdock.runTask(s, userMsg, driverOverride);
+            else await engine.reply(s, contactId, userMsg);
           }
           if (!mentions.length) void summarizer.maybeRun(s);
         };
@@ -477,7 +490,8 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         }
       }
       if (parts[3] === "messages" && parts[5] === "cancel" && method === "POST") {
-        return json(res, 200, { ok: engine.cancel(seg(4)) });
+        const id = seg(4);
+        return json(res, 200, { ok: engine.cancel(id) || deskdock.cancel(id) });
       }
       if (parts[3] === "messages" && parts[5] === "regenerate" && method === "POST") {
         const mid = seg(4);

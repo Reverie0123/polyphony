@@ -378,6 +378,20 @@ export class ChatView {
     return box;
   }
 
+  buildSteps(m) {
+    const box = document.createElement("div");
+    box.className = "steps";
+    m.steps.forEach((st, i) => {
+      const d = document.createElement("details");
+      d.className = "step" + (st.endedAt ? "" : " running");
+      const status = st.endedAt ? (st.ok ? `<span class="ok">✓ ${escapeHtml(t("dd.stepOk"))}</span>` : `<span class="fail">✗ ${escapeHtml(t("dd.stepFail"))}</span>`) : "";
+      d.innerHTML = `<summary><span>${i + 1}.</span><span class="tool">${escapeHtml(st.tool)}</span>${status}</summary><div class="args">${escapeHtml(st.argsSummary)}</div><div class="result">${escapeHtml(st.resultSummary || "")}</div>`;
+      box.appendChild(d);
+    });
+    if (m.status === "streaming" && !m.steps.length) box.innerHTML = `<div class="typing">${escapeHtml(t("dd.working"))}</div>`;
+    return box;
+  }
+
   buildNode(m) {
     const settings = this.ctx.settings;
     const wrap = document.createElement("div");
@@ -432,7 +446,8 @@ export class ChatView {
     bubble.className = "bubble" + (m.status === "streaming" ? " streaming" : "");
     const idx = this.session.messages.findIndex((x) => x.id === m.id);
     const prevId = idx > 0 ? this.session.messages[idx - 1].id : null;
-    if (m.replyTo && m.replyTo !== prevId) {
+    // Discussion turns all answer the topic post; quoting it on every turn is noise.
+    if (m.replyTo && m.replyTo !== prevId && m.round === undefined) {
       const q = this.session.messages.find((x) => x.id === m.replyTo);
       const qEl = document.createElement("div");
       qEl.className = "quote";
@@ -447,6 +462,7 @@ export class ChatView {
       bubble.appendChild(d);
     }
     if (m.attachments?.length) bubble.appendChild(this.buildAttachments(m));
+    if (m.kind === "steps" && m.steps) bubble.appendChild(this.buildSteps(m));
     const content = document.createElement("div");
     content.className = "content";
     content.innerHTML = renderMarkdown(m.text);

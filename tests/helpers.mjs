@@ -9,12 +9,14 @@ import { Attachments } from "../dist/attachments.js";
 import { Vision } from "../dist/vision.js";
 import { Summarizer } from "../dist/summary.js";
 import { Orchestrator } from "../dist/orchestrator.js";
+import { DeskDock } from "../dist/deskdock.js";
 import { createApp } from "../dist/server.js";
 import { registerProvider } from "../dist/providers/index.js";
 
 export function tempDir() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "polyphony-test-"));
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  // Child processes (fake MCP server) may still be releasing the directory; retry a few times.
+  return { dir, cleanup: () => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* leave the temp dir */ } } };
 }
 
 /** A provider that streams a canned reply. `script` can be a function of the request for assertions. */
@@ -27,6 +29,7 @@ export function fakeProvider(script) {
       if (req.signal?.aborted) { const { ProviderError } = await import("../dist/providers/types.js"); throw new ProviderError("cancelled", "cancelled"); }
       yield { type: "delta", text: piece };
     }
+    for (const call of plan.toolCalls ?? []) yield { type: "tool_call", id: call.id, name: call.name, args: JSON.stringify(call.args ?? {}) };
     if (plan.usage !== null) yield { type: "usage", usage: plan.usage ?? { input: 100, output: 20, cacheRead: 50, cacheWrite: 0, reasoning: 0, estimated: false } };
     yield { type: "done", finish: "stop", model: plan.model ?? req.model };
   };
@@ -44,10 +47,11 @@ export async function startServer({ script, summary, ocr } = {}) {
   const attachments = new Attachments(dir);
   const summarizer = new Summarizer({ store, pricing, broadcast, lang: () => "zh", call: engine.callContact, ...(summary ?? {}) });
   const vision = new Vision({ store, pricing, attachments, broadcast, lang: () => "zh", call: engine.callContact, ocr });
-  const orchestrator = new Orchestrator({ store, engine, broadcast, lang: () => "zh", gapMs: () => 20 });
+  const deskdock = new DeskDock({ store, pricing, broadcast, lang: () => "zh", commandOverride: { command: process.execPath, args: [path.resolve("tests/fake-mcp.mjs")] } });
+  const orchestrator = new Orchestrator({ store, engine, broadcast, lang: () => "zh", gapMs: () => 20, runDeskdock: (s, m) => deskdock.runTask(s, m) });
   engine.afterReply = (s, m) => { void summarizer.maybeRun(s); void orchestrator.onReply(s, m); };
   const token = "test-token";
-  const { server, hub } = createApp({ store, pricing, engine, attachments, vision, summarizer, orchestrator, token, version: "test", webDir: path.resolve("web") });
+  const { server, hub } = createApp({ store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, token, version: "test", webDir: path.resolve("web") });
   // Capture broadcasts for assertions without an SSE client.
   const orig = hub.broadcast.bind(hub);
   hub.broadcast = (e, d) => { events.push({ event: e, data: d }); for (const l of listeners) l(e, d); orig(e, d); };
@@ -67,8 +71,8 @@ export async function startServer({ script, summary, ocr } = {}) {
     const l = (e, d) => { if (pred(e, d)) { clearTimeout(timer); listeners.delete(l); resolve({ event: e, data: d }); } };
     listeners.add(l);
   });
-  const close = async () => { await new Promise((r) => server.close(r)); cleanup(); };
-  return { store, pricing, engine, attachments, summarizer, vision, orchestrator, api, base, token, events, waitFor, close, dir };
+  const close = async () => { deskdock.restart(); await new Promise((r) => server.close(r)); cleanup(); };
+  return { store, pricing, engine, attachments, summarizer, vision, orchestrator, deskdock, api, base, token, events, waitFor, close, dir };
 }
 
 /** Registers a fake account whose provider key is "fake" by patching the account after creation. */

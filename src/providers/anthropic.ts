@@ -1,5 +1,5 @@
 // Anthropic Messages API over raw HTTP (the project runs without runtime dependencies). Streaming SSE.
-import { type ChatEvent, type ChatFn, ProviderError, fetchWithTimeout, httpError, readLines } from "./types.js";
+import { type ChatEvent, type ChatFn, type ChatRequest, ProviderError, fetchWithTimeout, httpError, readLines } from "./types.js";
 import type { Usage } from "../models.js";
 
 const API_VERSION = "2023-06-01";
@@ -88,13 +88,38 @@ export function parseAnthropicEvent(json: string, st: ParseState): ChatEvent[] {
   return out;
 }
 
+/** Tool calls become tool_use blocks; consecutive tool results merge into one user message of tool_result blocks. */
+export function toAnthropicMessages(messages: ChatRequest["messages"]): { role: string; content: unknown }[] {
+  const out: { role: string; content: unknown }[] = [];
+  for (const m of messages) {
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      const blocks: unknown[] = [];
+      if (m.content) blocks.push({ type: "text", text: m.content });
+      for (const c of m.toolCalls) {
+        let input: unknown = {};
+        try { input = c.args ? JSON.parse(c.args) : {}; } catch { input = {}; }
+        blocks.push({ type: "tool_use", id: c.id, name: c.name, input });
+      }
+      out.push({ role: "assistant", content: blocks });
+    } else if (m.role === "tool") {
+      const content: unknown[] = [{ type: "text", text: m.content || "(empty)" }];
+      for (const im of m.images ?? []) content.push({ type: "image", source: { type: "base64", media_type: im.mime, data: im.data } });
+      const block = { type: "tool_result", tool_use_id: m.toolCallId ?? "", content };
+      const last = out[out.length - 1];
+      if (last && last.role === "user" && Array.isArray(last.content) && (last.content as { type: string }[]).every((b) => b.type === "tool_result")) (last.content as unknown[]).push(block);
+      else out.push({ role: "user", content: [block] });
+    } else out.push({ role: m.role, content: m.content });
+  }
+  return out;
+}
+
 export const chatAnthropic: ChatFn = async function* (ctx, req) {
   const base = ctx.account.baseURL.replace(/\/+$/, "") || "https://api.anthropic.com";
   const body: Record<string, unknown> = {
     model: req.model,
     max_tokens: req.maxTokens ?? 8192,
     stream: true,
-    messages: req.messages.map((m) => ({ role: m.role, content: m.content as unknown })),
+    messages: toAnthropicMessages(req.messages),
   };
   if (req.images?.length) {
     const msgs = body.messages as { role: string; content: unknown }[];
