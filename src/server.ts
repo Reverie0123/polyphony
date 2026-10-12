@@ -13,6 +13,7 @@ import { Vision } from "./vision.js";
 import { Summarizer } from "./summary.js";
 import { Orchestrator } from "./orchestrator.js";
 import { DeskDock, parseDriverOverride } from "./deskdock.js";
+import type { Updater } from "./updater.js";
 import { parseMentionsIn } from "./mentions.js";
 import { discoverModels } from "./providers/discover.js";
 import { ProviderError } from "./providers/index.js";
@@ -27,6 +28,9 @@ export interface ServerOptions {
   summarizer: Summarizer;
   orchestrator: Orchestrator;
   deskdock: DeskDock;
+  updater?: Updater;
+  /** Restarts the process (Setup / global installs after an update). */
+  restart?: () => void;
   token: string;
   lanToken?: string;
   version: string;
@@ -180,7 +184,27 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         pricingFetchedAt: pricing.onlineFetchedAt,
         lanAddresses: store.getSettings().lanAccess ? [...localAddresses()].filter((a) => /^\d/.test(a) && a !== "127.0.0.1") : [],
         lanToken: store.getSettings().lanAccess ? opts.lanToken ?? null : null,
+        update: opts.updater?.info ?? null,
       });
+    }
+
+    // ----- updates -----
+    if (p === "/api/update/check" && method === "GET") {
+      if (!opts.updater) return json(res, 200, null);
+      return json(res, 200, await opts.updater.check());
+    }
+    if (p === "/api/update/apply" && method === "POST") {
+      const info = opts.updater?.info ?? (await opts.updater?.check());
+      if (!info) throw new HttpError(400, "updater unavailable");
+      if (info.action !== "npm-global") return json(res, 200, { ok: false, action: info.action });
+      const r = await opts.updater!.applyGlobal((line) => hub.broadcast("update.progress", { line }));
+      return json(res, 200, { ok: r.ok, action: info.action, log: r.log });
+    }
+    if (p === "/api/restart" && method === "POST") {
+      if (!opts.restart) throw new HttpError(400, "restart unavailable");
+      json(res, 200, { ok: true });
+      setTimeout(() => opts.restart!(), 300);
+      return;
     }
 
     // ----- attachments -----

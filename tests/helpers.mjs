@@ -35,7 +35,7 @@ export function fakeProvider(script) {
   };
 }
 
-export async function startServer({ script, summary, ocr } = {}) {
+export async function startServer({ script, summary, ocr, extra } = {}) {
   const { dir, cleanup } = tempDir();
   registerProvider("fake", fakeProvider(script ?? {}));
   const store = new Store(dir);
@@ -51,7 +51,7 @@ export async function startServer({ script, summary, ocr } = {}) {
   const orchestrator = new Orchestrator({ store, engine, broadcast, lang: () => "zh", gapMs: () => 20, runDeskdock: (s, m) => deskdock.runTask(s, m) });
   engine.afterReply = (s, m) => { void summarizer.maybeRun(s); void orchestrator.onReply(s, m); };
   const token = "test-token";
-  const { server, hub } = createApp({ store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, token, version: "test", webDir: path.resolve("web") });
+  const { server, hub } = createApp({ store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, token, version: "test", webDir: path.resolve("web"), ...(extra ?? {}) });
   // Capture broadcasts for assertions without an SSE client.
   const orig = hub.broadcast.bind(hub);
   hub.broadcast = (e, d) => { events.push({ event: e, data: d }); for (const l of listeners) l(e, d); orig(e, d); };

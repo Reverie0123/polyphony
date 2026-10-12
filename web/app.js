@@ -6,6 +6,7 @@ import { ChatView, avatarEl, formatCost } from "./chat.js";
 import { Panel } from "./panel.js";
 import { openContacts, openNewSession, openModal } from "./contacts.js";
 import { openDiscussion, renderDiscBar } from "./discussion.js";
+import { drawQr } from "./qr.js";
 
 const ctx = {
   settings: {},
@@ -29,6 +30,7 @@ const ctx = {
     ctx.sessions = b.sessions;
     ctx.version = b.version;
     ctx.lan = { addresses: b.lanAddresses, token: b.lanToken };
+    ctx.update = b.update;
     applyTheme();
     renderSessionList();
     document.getElementById("sidebar-foot").innerHTML = `<span>Polyphony ${escapeHtml(b.version)}</span>`;
@@ -108,8 +110,9 @@ function openSettings() {
   const s = ctx.settings;
   const f = (label, input, hint) => `<div class="field"><label>${escapeHtml(label)}</label>${input}${hint ? `<div class="hint">${escapeHtml(hint)}</div>` : ""}</div>`;
   const sel = (id, value, opts) => `<select id="${id}">${opts.map(([v, l]) => `<option value="${v}" ${value === v ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}</select>`;
-  const lanInfo = s.lanAccess && ctx.lan?.addresses?.length
-    ? `<div class="hint">${escapeHtml(t("settings.lanUrl"))} ${ctx.lan.addresses.map((a) => `http://${a}:${s.port}/?token=${encodeURIComponent(ctx.lan.token ?? "")}`).map(escapeHtml).join("<br>")}</div>`
+  const lanUrls = s.lanAccess && ctx.lan?.addresses?.length ? ctx.lan.addresses.map((a) => `http://${a}:${s.port}/?token=${encodeURIComponent(ctx.lan.token ?? "")}`) : [];
+  const lanInfo = lanUrls.length
+    ? `<div class="hint">${escapeHtml(t("settings.lanUrl"))}<br>${lanUrls.map(escapeHtml).join("<br>")}</div><div class="hint">${escapeHtml(t("lan.qr"))}</div><div class="row" id="s-lan-qr" style="gap:16px;flex-wrap:wrap;margin:6px 0 10px"></div>`
     : "";
   const html = `
     <div class="row">
@@ -141,7 +144,8 @@ function openSettings() {
     <div class="row" style="margin:8px 0"><button class="btn sm" id="s-refresh">${escapeHtml(t("settings.refreshPricing"))}</button><span class="hint" id="s-fetched"></span></div>
     <div id="s-pricing"></div>
     <div class="section-title">${escapeHtml(t("settings.version"))}</div>
-    <div class="hint">Polyphony ${escapeHtml(ctx.version)}</div>`;
+    <div class="row" style="align-items:center"><span class="hint" id="s-upd-status">Polyphony ${escapeHtml(ctx.version)}</span><button class="btn sm" id="s-upd-check" style="flex:0 0 auto">${escapeHtml(t("upd.check"))}</button><button class="btn sm primary hidden" id="s-upd-apply" style="flex:0 0 auto">${escapeHtml(t("upd.apply"))}</button><button class="btn sm hidden" id="s-upd-restart" style="flex:0 0 auto">${escapeHtml(t("upd.restart"))}</button></div>
+    <pre id="s-upd-log" class="hint hidden" style="max-height:120px;overflow:auto;white-space:pre-wrap"></pre>`;
   openModal(ctx, {
     title: t("settings.title"),
     bodyHtml: html,
@@ -182,6 +186,32 @@ function openSettings() {
           load();
         }));
       };
+      const qrBox = modal.querySelector("#s-lan-qr");
+      if (qrBox) for (const u of lanUrls) { try { const cv = document.createElement("canvas"); drawQr(cv, u, 3); cv.title = u; qrBox.appendChild(cv); } catch (err) { console.error(err); } }
+      const updStatus = modal.querySelector("#s-upd-status");
+      const updApply = modal.querySelector("#s-upd-apply");
+      const updRestart = modal.querySelector("#s-upd-restart");
+      const updLog = modal.querySelector("#s-upd-log");
+      const showUpd = (info) => {
+        if (!info) return;
+        if (info.error) { updStatus.textContent = `Polyphony ${ctx.version} · ${info.error}`; return; }
+        if (!info.hasUpdate) { updStatus.textContent = t("upd.latest", { v: info.current }); updApply.classList.add("hidden"); return; }
+        updStatus.textContent = t("upd.available", { v: info.latest });
+        if (info.action === "npm-global") updApply.classList.remove("hidden");
+        else if (info.action === "rerun-npx") updStatus.textContent += " · " + t("upd.rerun");
+        else if (info.action === "download-setup") updStatus.textContent += " · " + t("upd.setup", { url: "https://github.com/Reverie0123/polyphony/releases" });
+        else updStatus.textContent += " · " + t("upd.source");
+      };
+      if (ctx.update) showUpd(ctx.update);
+      modal.querySelector("#s-upd-check").addEventListener("click", async (e) => {
+        const btn = e.currentTarget; btn.disabled = true; updStatus.textContent = t("upd.checking");
+        try { showUpd(await get("/api/update/check")); } catch (err) { ctx.toast(err.message, true); } finally { btn.disabled = false; }
+      });
+      updApply.addEventListener("click", async () => {
+        updApply.disabled = true; updLog.classList.remove("hidden"); updLog.textContent = "";
+        try { const r = await post("/api/update/apply"); updLog.textContent = r.log ?? ""; if (r.ok) { updStatus.textContent = t("upd.done"); updRestart.classList.remove("hidden"); } else ctx.toast(t("upd.failed"), true); } catch (err) { ctx.toast(err.message, true); } finally { updApply.disabled = false; }
+      });
+      updRestart.addEventListener("click", async () => { await post("/api/restart"); setTimeout(() => location.reload(), 2500); });
       const ddStatus = modal.querySelector("#s-dd-status");
       const showDd = (st) => {
         const parts = [st.installed ? t("dd.status.installed", { cmd: st.command }) : t("dd.status.missing"), st.running ? t("dd.status.running", { n: st.toolCount }) : t("dd.status.idle")];
@@ -218,6 +248,8 @@ function wireEvents() {
     "message.updated": ({ sessionId, message }) => chat.onUpdated(sessionId, message),
     "message.deleted": ({ sessionId, messageId }) => chat.onDeleted(sessionId, messageId),
     "ledger.updated": () => panel.refreshCost(),
+    "update.available": (info) => { ctx.update = info; ctx.toast(t("upd.available", { v: info.latest })); },
+    "update.progress": ({ line }) => { const log = document.getElementById("s-upd-log"); if (log) { log.textContent += line; log.scrollTop = log.scrollHeight; } },
     "deskdock.install": ({ line }) => { const log = document.getElementById("s-dd-log"); if (log) { log.textContent += line; log.scrollTop = log.scrollHeight; } },
     "discussion.round": ({ sessionId, round }) => { if (current?.id === sessionId && current.discussion) { current.discussion.currentRound = round; renderDiscBar(ctx, current); } },
     "session.created": ({ session }) => { if (!ctx.sessions.some((s) => s.id === session.id)) { ctx.sessions.unshift(session); renderSessionList(); } },

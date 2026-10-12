@@ -13,6 +13,7 @@ import { Vision } from "./vision.js";
 import { Summarizer } from "./summary.js";
 import { Orchestrator } from "./orchestrator.js";
 import { DeskDock } from "./deskdock.js";
+import { Updater } from "./updater.js";
 import { createApp } from "./server.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -145,8 +146,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const orchestrator = new Orchestrator({ store, engine, broadcast, lang, runDeskdock: (s, m) => deskdock.runTask(s, m) });
   engine.afterReply = (s, m) => { void summarizer.maybeRun(s); void orchestrator.onReply(s, m); };
   for (const meta of store.listSessions()) { const s = store.getSession(meta.id); if (s) orchestrator.recover(s); }
+  const updater = new Updater(version);
+  const restart = () => {
+    // Relaunch the same entry detached, then leave; the new process takes over the port once this one closes.
+    deskdock.restart();
+    server.close();
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...argv.filter((a) => a !== "--force"), "--force"], { detached: true, stdio: "ignore", windowsHide: true });
+    child.unref();
+    setTimeout(() => process.exit(0), 200);
+  };
   const { server, hub } = createApp({
-    store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, token: tokens.token, lanToken, version,
+    store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, updater, restart, token: tokens.token, lanToken, version,
     onClients: (n) => { clients = n; if (n === 0) idleSince = Date.now(); },
   });
 
@@ -159,8 +169,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   console.log(`Polyphony ${version} listening on ${url}  data: ${dir}`);
   if (!argv.includes("--no-open")) openWindow(`${url}?token=${encodeURIComponent(tokens.token)}`, dir);
 
-  // Price refresh in the background, at most once a day.
+  // Price refresh and update check in the background.
   void pricing.refreshOnline(store.listContacts().map((c) => c.model).filter(Boolean));
+  if (settings.checkUpdates && !argv.includes("--no-update-check")) {
+    setTimeout(() => { void updater.check().then((info) => { if (info.hasUpdate) hub.broadcast("update.available", info); }); }, 3000).unref();
+  }
 
   // Auto exit: no connected page for N minutes and nothing running.
   const timer = setInterval(() => {

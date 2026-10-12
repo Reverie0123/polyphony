@@ -11,6 +11,8 @@
   "files": [
     "dist",
     "web",
+    "resources",
+    "install.ps1",
     "README.md",
     "README.zh.md",
     "LICENSE",
@@ -24,7 +26,10 @@
     "start": "node dist/index.js",
     "dev": "npm run build && node dist/index.js --no-open",
     "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "make:icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-icon.ps1",
+    "make:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-installer.ps1",
+    "record:fixtures": "node scripts/record-fixtures.mjs"
   },
   "keywords": [
     "llm",
