@@ -1,0 +1,46 @@
+{
+  "name": "polyphony-chat",
+  "version": "0.1.0",
+  "description": "Polyphony: WeChat-style group chat for AI models. 复调：把几个 AI 模型拉进一个群，@ 谁谁答，每条标价。",
+  "license": "MIT",
+  "author": "Reverie0123",
+  "type": "module",
+  "bin": {
+    "polyphony": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "web",
+    "README.md",
+    "README.zh.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "npm run build && node dist/index.js --no-open",
+    "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "llm",
+    "multi-model",
+    "group-chat",
+    "deepseek",
+    "anthropic",
+    "ollama",
+    "deskdock"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Reverie0123/polyphony.git"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polyphony 复调</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b6ef5'/%3E%3Ccircle cx='11' cy='13' r='4' fill='white'/%3E%3Ccircle cx='21' cy='13' r='4' fill='white' opacity='.8'/%3E%3Ccircle cx='16' cy='21' r='4' fill='white' opacity='.6'/%3E%3C/svg%3E">
+</head>
+<body>
+  <div id="app" class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand"><span class="logo"></span><span data-i18n="app.name">复调</span></div>
+        <div class="head-actions">
+          <button class="icon-btn" id="btn-new" data-i18n-title="action.newChat" title="新建会话">＋</button>
+          <button class="icon-btn" id="btn-contacts" data-i18n-title="action.contacts" title="联系人">👥</button>
+          <button class="icon-btn" id="btn-settings" data-i18n-title="action.settings" title="设置">⚙</button>
+        </div>
+      </div>
+      <div class="session-list" id="session-list"></div>
+      <div class="sidebar-foot" id="sidebar-foot"></div>
+    </aside>
+
+    <main class="main" id="main">
+      <div class="empty" id="empty-state">
+        <div class="empty-logo"></div>
+        <h2 data-i18n="empty.title">把几个模型拉进一个群</h2>
+        <p data-i18n="empty.hint">先在「联系人」里加一个账号和型号，再点「＋」开一个会话。</p>
+        <div class="empty-actions">
+          <button class="btn primary" id="empty-contacts" data-i18n="action.contacts">联系人</button>
+          <button class="btn" id="empty-new" data-i18n="action.newChat">新建会话</button>
+        </div>
+      </div>
+
+      <div class="chat hidden" id="chat">
+        <header class="chat-head">
+          <button class="icon-btn only-narrow" id="btn-back">‹</button>
+          <div class="chat-title">
+            <div class="title" id="chat-title"></div>
+            <div class="subtitle" id="chat-subtitle"></div>
+          </div>
+          <div class="head-actions">
+            <button class="icon-btn" id="btn-panel" data-i18n-title="action.panel" title="成员与费用">☰</button>
+          </div>
+        </header>
+        <div class="messages" id="messages"></div>
+        <footer class="composer">
+          <div class="privacy-line" id="privacy-line"></div>
+          <div class="mention-row hidden" id="mention-row"></div>
+          <div class="reply-bar hidden" id="reply-bar"></div>
+          <div class="composer-row">
+            <textarea id="input" rows="2" data-i18n-placeholder="composer.placeholder" placeholder="输入消息，群聊里用 @ 点名；Enter 发送，Shift+Enter 换行"></textarea>
+            <div class="composer-actions">
+              <label class="whisper hidden" id="whisper-label" data-i18n-title="composer.whisperHint" title="只给被 @ 的人看，不进群历史">
+                <input type="checkbox" id="whisper"> <span data-i18n="composer.whisper">悄悄话</span>
+              </label>
+              <button class="btn primary" id="btn-send" data-i18n="action.send">发送</button>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+      <aside class="panel hidden" id="panel">
+        <div class="panel-resizer" id="panel-resizer"></div>
+        <div class="panel-inner">
+          <div class="panel-head">
+            <div class="tabs" id="panel-tabs">
+              <button class="tab active" data-tab="members" data-i18n="panel.members">成员</button>
+              <button class="tab" data-tab="cost" data-i18n="panel.cost">费用</button>
+              <button class="tab" data-tab="session" data-i18n="panel.session">设置</button>
+            </div>
+            <div class="head-actions">
+              <button class="icon-btn" id="panel-max" title="最大化">⤢</button>
+              <button class="icon-btn" id="panel-close" title="关闭">✕</button>
+            </div>
+          </div>
+          <div class="panel-body" id="panel-body"></div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="modal-root" id="modal-root"></div>
+  <div class="toast-root" id="toast-root"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
