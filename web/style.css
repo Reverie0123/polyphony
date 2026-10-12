@@ -235,3 +235,13 @@ table.pricing input { width: 70px; padding: 2px 4px; border: 1px solid var(--lin
 .folded { font-size: 12px; color: var(--text-3); }
 .folded summary { cursor: pointer; }
 .msg .star { color: var(--warn); }
+
+/* ----- phase 3: discussion ----- */
+.disc-bar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: rgba(59,110,245,.08); font-size: 12.5px; }
+.disc-bar .grow { flex: 1; }
+.disc-bar.paused { background: rgba(232,113,10,.12); }
+.mention-card { display: flex; gap: 8px; align-items: center; justify-content: center; }
+.mention-card .btn { padding: 2px 10px; font-size: 12px; }
+.role-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.role-row .avatar { flex-shrink: 0; }
+.role-row textarea { flex: 1; min-height: 44px; font-size: 12.5px; }

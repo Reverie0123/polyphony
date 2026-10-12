@@ -23,6 +23,44 @@ export interface BuildOptions {
   trigger?: Message;
   /** Maximum characters of one history message before it is cut; quoted messages are never cut. */
   maxMessageChars?: number;
+  /** Extra user turn appended at the very end, e.g. "your turn, round 2". */
+  instruction?: string;
+  /** Free-discussion rules to add to the system prompt. */
+  discussion?: { question: string; round: number; rounds: number; canEnd: boolean; role?: string };
+}
+
+export const NO_OBJECTION = { zh: "[无异议]", en: "[no objection]" };
+export const END_DISCUSSION = { zh: "[结束讨论]", en: "[end discussion]" };
+
+/** True when the reply is only the no-objection marker (whitespace-trimmed, either language, under 20 extra characters). */
+export function isNoObjection(text: string): boolean {
+  const t = text.trim();
+  for (const m of [NO_OBJECTION.zh, NO_OBJECTION.en]) {
+    if (t === m) return true;
+    if (t.toLowerCase().startsWith(m.toLowerCase()) && t.length - m.length < 20) return true;
+  }
+  return false;
+}
+
+export function hasEndMarker(text: string): boolean {
+  const t = text.toLowerCase();
+  return t.includes(END_DISCUSSION.zh) || t.includes(END_DISCUSSION.en.toLowerCase());
+}
+
+/** Character 3-gram Jaccard similarity; used to detect a speaker repeating itself. */
+export function similarity(a: string, b: string): number {
+  const grams = (s: string) => {
+    const t = s.replace(/\s+/g, "");
+    const set = new Set<string>();
+    for (let i = 0; i + 3 <= t.length; i++) set.add(t.slice(i, i + 3));
+    return set;
+  };
+  const ga = grams(a);
+  const gb = grams(b);
+  if (!ga.size || !gb.size) return 0;
+  let inter = 0;
+  for (const g of ga) if (gb.has(g)) inter++;
+  return inter / (ga.size + gb.size - inter);
 }
 
 const T = {
@@ -87,6 +125,25 @@ export function buildContext(session: Session, self: Contact, member: Member | u
     sys.push(`${t.members}:\n- ${t.you}\n${list}`);
     sys.push(t.rules.join("\n"));
   }
+  if (opts.discussion) {
+    const d = opts.discussion;
+    const r = opts.lang === "zh"
+      ? [
+        `现在是自由讨论，议题：${d.question}`,
+        `共 ${d.rounds} 轮，当前第 ${d.round} 轮。每轮每人发言一次。`,
+        "规则：不要复述别人已经说过的内容；不要以「我同意」「很好的观点」之类的客套开头；每轮至少提出一个具体的修改、反对或新论据；直接说结论和理由。",
+        `如果你对当前结论没有任何新意见，只回复 ${NO_OBJECTION.zh} 这四个字，不要写别的。`,
+        d.canEnd ? `如果讨论目标已经达成，你可以在回复末尾单独一行写 ${END_DISCUSSION.zh} 来结束讨论。` : "",
+      ]
+      : [
+        `This is a free discussion. Topic: ${d.question}`,
+        `${d.rounds} rounds in total, now round ${d.round}. Everyone speaks once per round.`,
+        "Rules: do not repeat what others already said; never open with agreement or compliments; each round bring at least one concrete change, objection or new argument; state conclusions and reasons directly.",
+        `If you have nothing new to add, reply with exactly ${NO_OBJECTION.en} and nothing else.`,
+        d.canEnd ? `If the goal is reached you may end the discussion by writing ${END_DISCUSSION.en} alone on the last line.` : "",
+      ];
+    sys.push(r.filter(Boolean).join("\n"));
+  }
   sys.push(t.privacy);
   const system = sys.join("\n\n");
 
@@ -130,6 +187,7 @@ export function buildContext(session: Session, self: Contact, member: Member | u
     else push("user", `[${nick(m.sender)}]: ${text}`);
   }
 
+  if (opts.instruction) push("user", opts.instruction);
   // Providers require the first message to be from the user; without a summary, a leading assistant turn is dropped.
   if (messages[0]?.role === "assistant") messages.shift();
   // And the last one too: a trailing assistant turn would be a prefill, which current Anthropic models reject.

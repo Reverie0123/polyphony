@@ -72,16 +72,35 @@ export interface Summary {
 export interface Discussion {
   id: string;
   question: string;
+  /** Message id of the question post, used as the reply target of every turn. */
+  questionMessageId: string;
   rounds: number;
   currentRound: number;
+  /** Speaker order for the current round (contact ids). */
   order: string[];
+  /** Index into `order` of the next speaker. */
   cursor: number;
   status: "running" | "paused" | "stopped" | "done";
   stopReason?: string;
+  /** USD spent by this discussion so far, and in the current round. */
   spent: number;
+  roundSpent: number;
   startedAt: string;
+  endedAt?: string;
   hostContactId?: string;
   summarizerContactId?: string;
+  /** Speakers who answered "[no objection]" in the current round. */
+  noObjection: string[];
+}
+
+/** A card inside a notice message that waits for the user, e.g. "甲 wants 乙 to speak". */
+export interface MessageAction {
+  type: "mention";
+  id: string;
+  from: string;
+  to: string;
+  sourceMessageId: string;
+  status: "pending" | "approved" | "rejected" | "expired";
 }
 
 export interface Session {
@@ -177,6 +196,7 @@ export interface Message {
   starred: boolean;
   pinned: boolean;
   round?: number;
+  action?: MessageAction;
   steps?: Step[];
   model?: string;
   latencyMs?: number;

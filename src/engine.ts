@@ -22,8 +22,14 @@ export interface EngineDeps {
   pricing: Pricing;
   broadcast: Broadcast;
   lang: () => "zh" | "en";
-  /** Called after every finished reply (done, error or cancelled); the summariser hooks in here. */
+  /** Called after every finished reply (done, error or cancelled); the summariser and the orchestrator hook in here. */
   afterReply?: (session: Session, message: Message) => void;
+}
+
+export interface ReplyOptions {
+  round?: number;
+  instruction?: string;
+  discussion?: { question: string; round: number; rounds: number; canEnd: boolean };
 }
 
 export class Engine {
@@ -107,8 +113,9 @@ export class Engine {
    * Creates the reply message immediately (status streaming) and resolves when it is done, errored or cancelled.
    * The returned promise never rejects; failures are recorded on the message.
    */
-  async reply(session: Session, contactId: string, trigger: Message | undefined, purpose: "reply" = "reply"): Promise<Message> {
+  async reply(session: Session, contactId: string, trigger: Message | undefined, opts: ReplyOptions = {}): Promise<Message> {
     const { store, pricing, broadcast } = this.deps;
+    const purpose = "reply" as const;
     const contact = store.getContact(contactId);
     const settings = store.getSettings();
     const msg = store.appendMessage(session, {
@@ -122,6 +129,7 @@ export class Engine {
       pinned: false,
       status: "streaming",
       replyTo: trigger?.id,
+      round: opts.round,
       model: contact?.model,
     });
     broadcast("message.created", { sessionId: session.id, message: msg });
@@ -146,7 +154,7 @@ export class Engine {
 
     const member = session.members.find((m) => m.contactId === contactId);
     const contacts = store.listContacts();
-    const built = buildContext(session, contact, member, contacts, { lang: this.deps.lang(), trigger });
+    const built = buildContext(session, contact, member, contacts, { lang: this.deps.lang(), trigger, instruction: opts.instruction, discussion: opts.discussion });
     msg.contextInfo = built.info;
 
     const controller = new AbortController();

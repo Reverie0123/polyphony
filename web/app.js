@@ -5,6 +5,7 @@ import { escapeHtml } from "./markdown.js";
 import { ChatView, avatarEl, formatCost } from "./chat.js";
 import { Panel } from "./panel.js";
 import { openContacts, openNewSession, openModal } from "./contacts.js";
+import { openDiscussion, renderDiscBar } from "./discussion.js";
 
 const ctx = {
   settings: {},
@@ -36,7 +37,7 @@ const ctx = {
     const i = ctx.sessions.findIndex((s) => s.id === updated.id);
     const { messages, ...meta } = updated;
     if (i >= 0) ctx.sessions[i] = { ...ctx.sessions[i], ...meta };
-    if (current && current.id === updated.id) { Object.assign(current, meta); chat.renderMentionRow(); updateHeader(); }
+    if (current && current.id === updated.id) { Object.assign(current, meta); chat.renderMentionRow(); updateHeader(); renderDiscBar(ctx, current); }
     renderSessionList();
   },
 };
@@ -90,6 +91,8 @@ async function openSession(id) {
   chat.open(current);
   panel.setSession(current);
   renderSessionList();
+  document.getElementById("btn-discuss").classList.toggle("hidden", current.kind !== "group");
+  renderDiscBar(ctx, current);
 }
 
 function closeSession() {
@@ -188,11 +191,12 @@ function wireEvents() {
     "message.done": async ({ sessionId, message }) => {
       chat.onDone(sessionId, message);
       bumpSession(sessionId, message);
-      if (current?.id === sessionId && message.cost) { current.spentTotal += message.cost.usd; updateHeader(); }
+      if (current?.id === sessionId && message.cost) { current.spentTotal += message.cost.usd; updateHeader(); if (current.discussion && message.round !== undefined) { current.discussion.spent += message.cost.usd; renderDiscBar(ctx, current); } }
     },
     "message.updated": ({ sessionId, message }) => chat.onUpdated(sessionId, message),
     "message.deleted": ({ sessionId, messageId }) => chat.onDeleted(sessionId, messageId),
     "ledger.updated": () => panel.refreshCost(),
+    "discussion.round": ({ sessionId, round }) => { if (current?.id === sessionId && current.discussion) { current.discussion.currentRound = round; renderDiscBar(ctx, current); } },
     "session.created": ({ session }) => { if (!ctx.sessions.some((s) => s.id === session.id)) { ctx.sessions.unshift(session); renderSessionList(); } },
     "session.updated": ({ session }) => ctx.onSessionPatched(session),
     "session.deleted": ({ sessionId }) => { ctx.sessions = ctx.sessions.filter((s) => s.id !== sessionId); if (current?.id === sessionId) closeSession(); else renderSessionList(); },
@@ -226,6 +230,7 @@ async function boot() {
   document.getElementById("empty-contacts").addEventListener("click", () => openContacts(ctx));
   document.getElementById("btn-settings").addEventListener("click", openSettings);
   document.getElementById("btn-panel").addEventListener("click", () => panel.toggle(current));
+  document.getElementById("btn-discuss").addEventListener("click", () => current && openDiscussion(ctx, current));
   document.getElementById("btn-back").addEventListener("click", closeSession);
   wireSearch();
   if (ctx.sessions.length) openSession(ctx.sessions[0].id);

@@ -11,6 +11,7 @@ import { Engine } from "./engine.js";
 import { Attachments } from "./attachments.js";
 import { Vision } from "./vision.js";
 import { Summarizer } from "./summary.js";
+import { Orchestrator } from "./orchestrator.js";
 import { createApp } from "./server.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -139,9 +140,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const attachments = new Attachments(dir);
   const summarizer = new Summarizer({ store, pricing, broadcast, lang, call: engine.callContact });
   const vision = new Vision({ store, pricing, attachments, broadcast, lang, call: engine.callContact });
-  engine.afterReply = (s) => { void summarizer.maybeRun(s); };
+  const orchestrator = new Orchestrator({ store, engine, broadcast, lang });
+  engine.afterReply = (s, m) => { void summarizer.maybeRun(s); void orchestrator.onReply(s, m); };
+  for (const meta of store.listSessions()) { const s = store.getSession(meta.id); if (s) orchestrator.recover(s); }
   const { server, hub } = createApp({
-    store, pricing, engine, attachments, vision, summarizer, token: tokens.token, lanToken, version,
+    store, pricing, engine, attachments, vision, summarizer, orchestrator, token: tokens.token, lanToken, version,
     onClients: (n) => { clients = n; if (n === 0) idleSince = Date.now(); },
   });
 
@@ -161,7 +164,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const timer = setInterval(() => {
     const minutes = store.getSettings().autoExitMinutes;
     if (minutes <= 0 || argv.includes("--no-exit")) return;
-    if (clients === 0 && engine.busy + summarizer.busy + vision.busy === 0 && Date.now() - idleSince > minutes * 60000) {
+    if (clients === 0 && engine.busy + summarizer.busy + vision.busy + orchestrator.busy === 0 && Date.now() - idleSince > minutes * 60000) {
       console.log("no page connected; exiting");
       server.close();
       clearInterval(timer);

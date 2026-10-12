@@ -4,6 +4,7 @@ import { escapeHtml } from "./markdown.js";
 import { get, post, patch, del } from "./api.js";
 import { avatarEl } from "./chat.js";
 import { openModal } from "./modal.js";
+import { templates } from "./templates.js";
 export { openModal };
 
 const DEFAULT_URLS = { openai: "https://api.deepseek.com/v1", anthropic: "https://api.anthropic.com", ollama: "http://127.0.0.1:11434", cli: "" };
@@ -200,6 +201,7 @@ export function openNewSession(ctx, onCreated) {
     ${field(t("new.kind"), `<select id="n-kind"><option value="direct">${escapeHtml(t("new.direct"))}</option><option value="group">${escapeHtml(t("new.group"))}</option></select>`)}
     <div class="field"><label>${escapeHtml(t("new.pick"))}</label><div class="pick-list" id="n-pick">${contacts.map((c) => `<div class="pick-row" data-id="${c.id}"><span class="avatar sm ${c.id === "deskdock" ? "deskdock" : ""}">${escapeHtml((c.avatar || c.nickname).slice(0, 2))}</span><span class="grow">${escapeHtml(c.nickname)}</span><span class="hint">${escapeHtml(c.model)}</span></div>`).join("")}</div></div>
     <div id="n-group-fields" class="hidden">
+      ${field(t("disc.template"), `<select id="n-template"><option value="">${escapeHtml(t("disc.templateNone"))}</option>${templates().map((tp) => `<option value="${tp.id}">${escapeHtml(tp.name)} · ${escapeHtml(tp.hint)}</option>`).join("")}</select>`, t("disc.applyHint"))}
       ${field(t("session.title"), `<input id="n-title" placeholder="">`)}
       ${field(t("session.intro"), `<textarea id="n-intro"></textarea>`, t("session.introHint"))}
       <div class="row">
@@ -219,9 +221,10 @@ export function openNewSession(ctx, onCreated) {
         onClick: async (modal) => {
           const q = (id) => modal.querySelector(id);
           const kind = q("#n-kind").value;
-          const members = [...picked].map((contactId) => ({ contactId }));
+          const tp = templates().find((x) => x.id === q("#n-template").value);
+          const members = [...picked].map((contactId, i) => ({ contactId, roleCard: tp?.roles[i] ?? "" }));
           if (!members.length) throw new Error(t("new.pick"));
-          const body = { kind, members, title: q("#n-title").value.trim(), intro: q("#n-intro").value };
+          const body = { kind, members, title: q("#n-title").value.trim(), intro: q("#n-intro").value || (kind === "group" && tp ? tp.intro : "") };
           const perRound = Number(q("#n-per-round").value);
           const total = Number(q("#n-total").value);
           body.budget = {};
@@ -235,6 +238,11 @@ export function openNewSession(ctx, onCreated) {
     onOpen: (modal) => {
       const kindSel = modal.querySelector("#n-kind");
       const pick = modal.querySelector("#n-pick");
+      modal.querySelector("#n-template").addEventListener("change", (e) => {
+        const tp = templates().find((x) => x.id === e.target.value);
+        const intro = modal.querySelector("#n-intro");
+        if (tp && !intro.value) intro.value = tp.intro;
+      });
       const sync = () => modal.querySelector("#n-group-fields").classList.toggle("hidden", kindSel.value !== "group");
       kindSel.addEventListener("change", () => { if (kindSel.value === "direct" && picked.size > 1) { const first = [...picked][0]; picked.clear(); picked.add(first); paint(); } sync(); });
       const paint = () => { for (const r of pick.querySelectorAll(".pick-row")) r.classList.toggle("on", picked.has(r.dataset.id)); };

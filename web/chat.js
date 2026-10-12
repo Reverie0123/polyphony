@@ -386,6 +386,20 @@ export class ChatView {
     wrap.dataset.id = m.id;
     if (m.kind === "notice" || m.sender === "system") {
       wrap.innerHTML = `<div class="body"><div class="bubble">${escapeHtml(m.text)}</div></div>`;
+      if (m.action?.type === "mention") {
+        const card = document.createElement("div");
+        card.className = "mention-card";
+        if (m.action.status === "pending") {
+          const ok = document.createElement("button"); ok.className = "btn primary"; ok.textContent = t("mention.approve");
+          const no = document.createElement("button"); no.className = "btn"; no.textContent = t("mention.reject");
+          ok.addEventListener("click", () => post(`/api/sessions/${this.session.id}/mentions/${m.action.id}/approve`).catch((e) => this.ctx.toast(e.message, true)));
+          no.addEventListener("click", () => post(`/api/sessions/${this.session.id}/mentions/${m.action.id}/reject`).catch((e) => this.ctx.toast(e.message, true)));
+          card.append(ok, no);
+        } else {
+          card.innerHTML = `<span class="hint">${escapeHtml(t(m.action.status === "approved" ? "mention.approved" : "mention.rejected"))}</span>`;
+        }
+        wrap.querySelector(".body").appendChild(card);
+      }
       return wrap;
     }
     const contact = isUser ? null : this.contact(m.sender);

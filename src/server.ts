@@ -11,6 +11,8 @@ import { Engine } from "./engine.js";
 import { Attachments, isImage } from "./attachments.js";
 import { Vision } from "./vision.js";
 import { Summarizer } from "./summary.js";
+import { Orchestrator } from "./orchestrator.js";
+import { parseMentionsIn } from "./mentions.js";
 import { discoverModels } from "./providers/discover.js";
 import { ProviderError } from "./providers/index.js";
 import { type Account, type Attachment, type Contact, type Member, type Message, type Session, type Settings, DESKDOCK_CONTACT_ID } from "./models.js";
@@ -22,6 +24,7 @@ export interface ServerOptions {
   attachments: Attachments;
   vision: Vision;
   summarizer: Summarizer;
+  orchestrator: Orchestrator;
   token: string;
   lanToken?: string;
   version: string;
@@ -98,22 +101,10 @@ function safeEqual(a: string, b: string): boolean {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-/** Finds "@nickname" mentions typed into the text, longest nicknames first so "小 C" beats "小". */
-export function parseMentions(text: string, members: { contactId: string; nickname: string }[]): string[] {
-  const out: string[] = [];
-  const sorted = [...members].filter((m) => m.nickname).sort((a, b) => b.nickname.length - a.nickname.length);
-  let rest = text;
-  for (const m of sorted) {
-    const needle = "@" + m.nickname;
-    if (!rest.includes(needle)) continue;
-    if (!out.includes(m.contactId)) out.push(m.contactId);
-    rest = rest.split(needle).join(" "); // consumed, so a shorter nickname inside it does not match too
-  }
-  return out;
-}
+export { parseMentionsIn as parseMentions } from "./mentions.js";
 
 export function createApp(opts: ServerOptions): { server: http.Server; hub: SseHub } {
-  const { store, pricing, engine, attachments, vision, summarizer } = opts;
+  const { store, pricing, engine, attachments, vision, summarizer, orchestrator } = opts;
   const webDir = opts.webDir ?? defaultWebDir();
   const hub = new SseHub(opts.onClients);
 
@@ -352,6 +343,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         if (typeof b.allowModelMentions === "boolean") s.allowModelMentions = b.allowModelMentions;
         if (typeof b.speakingOrder === "string" && ["list", "random", "host", "race"].includes(b.speakingOrder)) s.speakingOrder = b.speakingOrder as Session["speakingOrder"];
         if (typeof b.roundGapSec === "number") s.roundGapSec = Math.max(0, b.roundGapSec);
+        if (Array.isArray(b.canEndDiscussion)) s.canEndDiscussion = (b.canEndDiscussion as unknown[]).filter((x): x is string => typeof x === "string" && s.members.some((m) => m.contactId === x));
         if (b.context && typeof b.context === "object") {
           const c = b.context as Record<string, unknown>;
           s.context = { recentCount: numOr(c.recentCount, s.context.recentCount)!, recentTokens: numOr(c.recentTokens, s.context.recentTokens)! };
@@ -387,7 +379,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         if (!text && !atts.length) throw new HttpError(400, "empty message", "empty");
         const nicks = s.members.map((m) => ({ contactId: m.contactId, nickname: store.getContact(m.contactId)?.nickname ?? "" }));
         let mentions = Array.isArray(b.mentions) ? (b.mentions as unknown[]).filter((x): x is string => typeof x === "string") : [];
-        for (const id of parseMentions(text, nicks)) if (!mentions.includes(id)) mentions.push(id);
+        for (const id of parseMentionsIn(text, nicks)) if (!mentions.includes(id)) mentions.push(id);
         if (s.kind === "direct") mentions = [s.members[0].contactId];
         mentions = mentions.filter((m) => s.members.some((x) => x.contactId === m));
         const privateTo = bool(b.whisper) && mentions.length ? mentions : undefined;
@@ -414,6 +406,32 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         };
         void run();
         return json(res, 200, { message: userMsg });
+      }
+      // ----- free discussion -----
+      if (parts[3] === "discussion" && method === "POST" && parts.length === 4) {
+        const b = await readBody(req);
+        if (s.kind !== "group") throw new HttpError(400, "discussions need a group", "bad_request");
+        const question = str(b.question).trim();
+        if (!question) throw new HttpError(400, "empty question", "empty");
+        try {
+          const d = orchestrator.start(s, { question, rounds: numOr(b.rounds, 3)!, hostContactId: str(b.hostContactId) || undefined, summarizerContactId: str(b.summarizerContactId) || undefined });
+          return json(res, 200, d);
+        } catch (e) {
+          throw new HttpError(409, (e as Error).message, "busy");
+        }
+      }
+      if (parts[3] === "discussion" && method === "POST" && parts.length === 5) {
+        const verb = parts[4];
+        if (verb === "stop") orchestrator.stop(s, "user");
+        else if (verb === "pause") orchestrator.pause(s);
+        else if (verb === "resume") orchestrator.resume(s);
+        else if (verb === "drop") orchestrator.drop(s);
+        else throw new HttpError(404, "no such verb", "not_found");
+        return json(res, 200, { discussion: s.discussion });
+      }
+      if (parts[3] === "mentions" && parts.length === 6 && method === "POST") {
+        const ok = await orchestrator.decideMention(s, seg(4), parts[5] === "approve");
+        return json(res, ok ? 200 : 404, { ok });
       }
       if (parts[3] === "messages" && parts[5] === "forward" && method === "POST") {
         const b = await readBody(req);

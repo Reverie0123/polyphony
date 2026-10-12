@@ -8,6 +8,7 @@ import { Engine } from "../dist/engine.js";
 import { Attachments } from "../dist/attachments.js";
 import { Vision } from "../dist/vision.js";
 import { Summarizer } from "../dist/summary.js";
+import { Orchestrator } from "../dist/orchestrator.js";
 import { createApp } from "../dist/server.js";
 import { registerProvider } from "../dist/providers/index.js";
 
@@ -43,9 +44,10 @@ export async function startServer({ script, summary, ocr } = {}) {
   const attachments = new Attachments(dir);
   const summarizer = new Summarizer({ store, pricing, broadcast, lang: () => "zh", call: engine.callContact, ...(summary ?? {}) });
   const vision = new Vision({ store, pricing, attachments, broadcast, lang: () => "zh", call: engine.callContact, ocr });
-  engine.afterReply = (s) => { void summarizer.maybeRun(s); };
+  const orchestrator = new Orchestrator({ store, engine, broadcast, lang: () => "zh", gapMs: () => 20 });
+  engine.afterReply = (s, m) => { void summarizer.maybeRun(s); void orchestrator.onReply(s, m); };
   const token = "test-token";
-  const { server, hub } = createApp({ store, pricing, engine, attachments, vision, summarizer, token, version: "test", webDir: path.resolve("web") });
+  const { server, hub } = createApp({ store, pricing, engine, attachments, vision, summarizer, orchestrator, token, version: "test", webDir: path.resolve("web") });
   // Capture broadcasts for assertions without an SSE client.
   const orig = hub.broadcast.bind(hub);
   hub.broadcast = (e, d) => { events.push({ event: e, data: d }); for (const l of listeners) l(e, d); orig(e, d); };
@@ -66,7 +68,7 @@ export async function startServer({ script, summary, ocr } = {}) {
     listeners.add(l);
   });
   const close = async () => { await new Promise((r) => server.close(r)); cleanup(); };
-  return { store, pricing, engine, attachments, summarizer, vision, api, base, token, events, waitFor, close, dir };
+  return { store, pricing, engine, attachments, summarizer, vision, orchestrator, api, base, token, events, waitFor, close, dir };
 }
 
 /** Registers a fake account whose provider key is "fake" by patching the account after creation. */
