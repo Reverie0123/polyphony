@@ -132,6 +132,10 @@ function openSettings() {
       ${f(t("settings.autoExit"), `<input id="s-exit" type="number" min="0" value="${s.autoExitMinutes}">`)}
       ${f(t("settings.concurrency"), `<input id="s-conc" type="number" min="1" max="16" value="${s.concurrency}">`)}
     </div>
+    <div class="row">
+      ${f(t("settings.streamIdle"), `<input id="s-idle" type="number" min="1" value="${s.streamIdleMinutes ?? 5}">`)}
+      ${f(t("settings.streamTotal"), `<input id="s-total" type="number" min="1" value="${s.streamTotalMinutes ?? 30}">`)}
+    </div>
     <label class="check"><input type="checkbox" id="s-cli" ${s.cliEnabled ? "checked" : ""}> ${escapeHtml(t("settings.cliEnabled"))}</label>
     <label class="check"><input type="checkbox" id="s-lan" ${s.lanAccess ? "checked" : ""}> ${escapeHtml(t("settings.lan"))}</label>
     ${lanInfo}
@@ -164,6 +168,7 @@ function openSettings() {
             costWarn: q("#s-warn").value === "" ? 0.5 : Number(q("#s-warn").value), costAlert: q("#s-alert").value === "" ? 2 : Number(q("#s-alert").value),
             autoExitMinutes: q("#s-exit").value === "" ? 10 : Number(q("#s-exit").value), concurrency: Number(q("#s-conc").value) || 4,
             cliEnabled: q("#s-cli").checked, lanAccess: q("#s-lan").checked, deskdockCommand: q("#s-dd-cmd").value.trim(),
+            streamIdleMinutes: Number(q("#s-idle").value) || 5, streamTotalMinutes: Number(q("#s-total").value) || 30,
           });
           await ctx.reload();
           if (current) { updateHeader(); chat.open(current); }

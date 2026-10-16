@@ -240,6 +240,15 @@ const zh = {
   "token.done": "令牌已重置",
   "session.parallelMentions": "一条消息 @ 多人时同时回答（默认依次回答，后者看得到前者）",
   "composer.unknownMention": "没有叫「{names}」的成员，这部分 @ 没有生效",
+  "msg.extraUnsummarised": "（摘要还没跟上，额外多带了 {n} 条）",
+  "settings.streamIdle": "回复多少分钟没有新内容就判超时",
+  "settings.streamTotal": "单条回复最长多少分钟",
+  "roles.generate": "用一个模型扮演多个角色",
+  "roles.base": "基础联系人（账号和型号）",
+  "roles.make": "按模板生成角色联系人",
+  "roles.made": "已生成 {n} 个角色并勾选",
+  "roles.hint": "只有一家 Key 也能开群：同一个模型带不同人设就是不同的成员。生成的角色会出现在联系人列表里，可以改名改人设。",
+  "contacts.cloneRole": "复制为新角色",
   "confirm": "确定",
 };
 
@@ -484,6 +493,15 @@ const en = {
   "token.done": "Token reset",
   "session.parallelMentions": "Answer several @mentions at once (default: one after another, later ones see earlier replies)",
   "composer.unknownMention": "No member called \"{names}\"; that mention did nothing",
+  "msg.extraUnsummarised": " (summary not caught up: {n} extra messages sent)",
+  "settings.streamIdle": "Minutes without new data before a reply times out",
+  "settings.streamTotal": "Maximum minutes per reply",
+  "roles.generate": "One model, several roles",
+  "roles.base": "Base contact (account and model)",
+  "roles.make": "Create role contacts from the template",
+  "roles.made": "{n} roles created and selected",
+  "roles.hint": "A single API key is enough for a group: the same model with different personas makes different members. Generated roles appear in the contact list and can be renamed or rewritten.",
+  "contacts.cloneRole": "Copy as new role",
   "confirm": "OK",
 };
 

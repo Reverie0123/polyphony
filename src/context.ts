@@ -14,7 +14,7 @@ export function messageText(m: Message, lang: "zh" | "en"): string {
 export interface BuiltContext {
   system: string;
   messages: ChatMessage[];
-  info: { historyCount: number; summaryUsed: boolean; tokensEstimate: number };
+  info: { historyCount: number; summaryUsed: boolean; tokensEstimate: number; extraUnsummarised?: number };
 }
 
 export interface BuildOptions {
@@ -152,6 +152,7 @@ export function buildContext(session: Session, self: Contact, member: Member | u
   const eligible = session.messages.filter((m) => includeInHistory(m, self.id));
   const window: Message[] = [];
   let tokens = 0;
+  let extraUnsummarised = 0;
   const quotedId = opts.trigger?.replyTo;
   // Messages after the summary's coverage that have not been summarised yet must not vanish: the window keeps growing
   // backwards over them (up to a hard cap of twice the token budget) until the secretary catches up.
@@ -164,6 +165,7 @@ export function buildContext(session: Session, self: Contact, member: Member | u
     const withinBudget = window.length < session.context.recentCount && (window.length === 0 || tokens + tk <= session.context.recentTokens);
     const unsummarised = m.seq > covered && tokens + tk <= hardCap;
     if (!withinBudget && !unsummarised) break;
+    if (!withinBudget) extraUnsummarised++;
     window.unshift(m);
     tokens += tk;
   }
@@ -202,7 +204,7 @@ export function buildContext(session: Session, self: Contact, member: Member | u
   if (!messages.length || messages[messages.length - 1].role === "assistant") push("user", t.continueNudge);
 
   const tokensEstimate = estimateTokens(system) + messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0);
-  return { system, messages, info: { historyCount: window.length, summaryUsed, tokensEstimate } };
+  return { system, messages, info: { historyCount: window.length, summaryUsed, tokensEstimate, ...(extraUnsummarised ? { extraUnsummarised } : {}) } };
 }
 
 function includeInHistory(m: Message, selfId: string): boolean {

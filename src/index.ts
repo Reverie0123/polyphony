@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { Store, dataDir, writeJsonAtomic } from "./store.js";
+import { Store, dataDir, writeJsonAtomic, flushPendingWrites } from "./store.js";
 import { Pricing } from "./pricing.js";
 import { Engine } from "./engine.js";
 import { Attachments } from "./attachments.js";
@@ -176,6 +176,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const lang = () => uiLang(store);
   const broadcast = (e: string, d: unknown) => hub.broadcast(e, d);
   const engine = new Engine({ store, pricing, broadcast, lang });
+  const applyTimeouts = () => { const st = store.getSettings(); engine.idleMs = Math.max(1, st.streamIdleMinutes) * 60000; engine.totalMs = Math.max(1, st.streamTotalMinutes) * 60000; };
+  applyTimeouts();
+  store.onSettingsChanged = applyTimeouts;
   const attachments = new Attachments(dir);
   const summarizer = new Summarizer({ store, pricing, broadcast, lang, call: engine.callContact });
   const vision = new Vision({ store, pricing, attachments, broadcast, lang, call: engine.callContact });
@@ -186,6 +189,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const updater = new Updater(version);
   const restart = () => {
     // Relaunch the same entry detached, then leave; the new process takes over the port once this one closes.
+    flushPendingWrites();
     deskdock.restart();
     server.close();
     const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...argv.filter((a) => a !== "--force"), "--force"], { detached: true, stdio: "ignore", windowsHide: true });
@@ -225,6 +229,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (minutes <= 0 || argv.includes("--no-exit")) return;
     if (clients === 0 && engine.busy + summarizer.busy + vision.busy + orchestrator.busy + deskdock.busy === 0 && Date.now() - idleSince > minutes * 60000) {
       console.log("no page connected; exiting");
+      flushPendingWrites();
       deskdock.restart();
       server.close();
       clearInterval(timer);
@@ -233,7 +238,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }, 30000);
   timer.unref();
 
-  const shutdown = () => { deskdock.restart(); server.close(); process.exit(0); };
+  const shutdown = () => { flushPendingWrites(); deskdock.restart(); server.close(); process.exit(0); };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }

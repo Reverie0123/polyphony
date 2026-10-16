@@ -200,7 +200,7 @@ export class ChatView {
       if (tg.host) label += `（${tg.host}）`;
       if (local) label += ` · ${t("privacy.local")}`;
       const est = tg.estimate ? ` · ${t("privacy.estimate", { tokens: fmtTokens(tg.estimate.tokens), cost: formatCost(tg.estimate.cost, settings) })}` : "";
-      const title = tg.estimate ? t("privacy.context", { n: tg.estimate.historyCount, summary: tg.estimate.summaryUsed ? t("privacy.summary") : "" }) : "";
+      const title = tg.estimate ? t("privacy.context", { n: tg.estimate.historyCount, summary: tg.estimate.summaryUsed ? t("privacy.summary") : "" }) + (tg.estimate.extraUnsummarised ? t("msg.extraUnsummarised", { n: tg.estimate.extraUnsummarised }) : "") : "";
       parts.push(`<span class="chip ${local ? "local" : ""}" title="${escapeHtml(title)}">${escapeHtml(label)}${escapeHtml(est)}</span>`);
     }
     if (s.kind === "group") parts.push(`<span class="muted">· ${escapeHtml(this.whisper.checked ? t("privacy.whisper") : t("privacy.history"))}</span>`);
@@ -501,7 +501,7 @@ export class ChatView {
     if (m.versions?.length) bits.push(`<span>${m.versions.length} × ${escapeHtml(t("msg.regenerated"))}</span>`);
     const info = document.createElement("span");
     info.innerHTML = bits.join("<span>·</span>");
-    if (m.contextInfo) info.title = t("msg.contextInfo", { n: m.contextInfo.historyCount, summary: m.contextInfo.summaryUsed ? t("privacy.summary") : "", tokens: fmtTokens(m.contextInfo.tokensEstimate) });
+    if (m.contextInfo) info.title = t("msg.contextInfo", { n: m.contextInfo.historyCount, summary: m.contextInfo.summaryUsed ? t("privacy.summary") : "", tokens: fmtTokens(m.contextInfo.tokensEstimate) }) + (m.contextInfo.extraUnsummarised ? t("msg.extraUnsummarised", { n: m.contextInfo.extraUnsummarised }) : "");
     foot.appendChild(info);
     foot.appendChild(this.actions(m));
     body.appendChild(foot);

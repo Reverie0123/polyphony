@@ -27,8 +27,19 @@ export function now(): string {
 /** Files that could not be parsed at startup (kept aside as *.corrupt-<time>); shown to the user on the first page load. */
 export const corruptFiles: string[] = [];
 
+/** A .tmp left behind by a crash or an exit during a retry holds the newest content; it is moved into place first. */
+export function recoverTmp(file: string): void {
+  const tmp = file + ".tmp";
+  if (!existsSync(tmp)) return;
+  try {
+    if (!existsSync(file) || statSync(tmp).mtimeMs >= statSync(file).mtimeMs) renameSync(tmp, file);
+    else unlinkSync(tmp);
+  } catch { /* still locked: the next write retries */ }
+}
+
 function readJson<T>(file: string, fallback: T): T {
   try {
+    recoverTmp(file);
     if (!existsSync(file)) return fallback;
     return JSON.parse(readFileSync(file, "utf8")) as T;
   } catch {
@@ -41,9 +52,13 @@ function readJson<T>(file: string, fallback: T): T {
 }
 
 export function writeJsonAtomic(file: string, value: unknown): void {
+  writeTextAtomic(file, JSON.stringify(value, null, 1));
+}
+
+export function writeTextAtomic(file: string, text: string): void {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = file + ".tmp";
-  writeFileSync(tmp, JSON.stringify(value, null, 1), "utf8");
+  writeFileSync(tmp, text, "utf8");
   // On Windows a scanner or editor holding the target makes rename fail with EPERM/EBUSY for a moment; retry briefly.
   const pending = pendingRenames.get(file);
   if (pending) { clearTimeout(pending); pendingRenames.delete(file); }
@@ -83,6 +98,25 @@ export function hasPendingWrite(file: string): boolean {
   return pendingRenames.has(file);
 }
 
+/**
+ * Called before the process exits: every rename still waiting is tried again right now (a few blocking attempts are
+ * acceptable at shutdown). Whatever still fails stays in its .tmp and is recovered by recoverTmp on the next start.
+ */
+export function flushPendingWrites(): number {
+  let flushed = 0;
+  for (const [file, timer] of pendingRenames) {
+    clearTimeout(timer);
+    pendingRenames.delete(file);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try { renameSync(file + ".tmp", file); flushed++; break; } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") break;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+      }
+    }
+  }
+  return flushed;
+}
+
 interface Collection<T> { schemaVersion: number; items: T[] }
 
 export class Store {
@@ -118,6 +152,9 @@ export class Store {
     return { ...this.settings };
   }
 
+  /** Called after settings are saved (the engine re-reads its timeouts). */
+  onSettingsChanged?: () => void;
+
   updateSettings(patch: Partial<Settings>): Settings {
     const allowed = Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[];
     const target = this.settings as unknown as Record<string, unknown>;
@@ -134,6 +171,7 @@ export class Store {
     }
     this.settings.schemaVersion = SCHEMA_VERSION;
     writeJsonAtomic(this.file("settings.json"), this.settings);
+    this.onSettingsChanged?.();
     return this.getSettings();
   }
 
@@ -258,7 +296,8 @@ export class Store {
 
   listSessions(): Omit<Session, "messages">[] {
     const out: Omit<Session, "messages">[] = [];
-    for (const name of readdirSync(path.join(this.dir, "sessions"))) {
+    const names = new Set(readdirSync(path.join(this.dir, "sessions")).map((n) => n.replace(/\.tmp$/, "")));
+    for (const name of names) {
       if (!name.endsWith(".json")) continue;
       const id = name.slice(0, -5);
       // Listing must not pull every session into the cache; uncached ones are parsed and let go.
@@ -292,6 +331,7 @@ export class Store {
   private readSessionFile(id: string): Session | undefined {
     if (this.deleted.has(id)) return undefined;
     const file = path.join(this.dir, "sessions", id + ".json");
+    recoverTmp(file);
     if (!existsSync(file)) return undefined;
     return readJson<Session | null>(file, null) ?? undefined;
   }
@@ -406,7 +446,7 @@ export class Store {
       for (const e of old) foldInto(this.ledgerTotals, e);
       appendFileSync(this.file("ledger-archive.jsonl"), old.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
       writeJsonAtomic(this.file("ledger-totals.json"), this.ledgerTotals);
-      writeFileSync(file, recent.map((e) => JSON.stringify(e)).join("\n") + (recent.length ? "\n" : ""), "utf8");
+      writeTextAtomic(file, recent.map((e) => JSON.stringify(e)).join("\n") + (recent.length ? "\n" : ""));
     }
     this.ledgerCache = recent;
     return recent;

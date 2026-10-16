@@ -300,7 +300,7 @@ export class Engine {
   }
 
   /** Token and cost estimate for the privacy line, computed the same way a real call would be. */
-  preview(session: Session, contactId: string, draft: string, settings: Settings): { tokens: number; cost: Cost; historyCount: number; summaryUsed: boolean } | undefined {
+  preview(session: Session, contactId: string, draft: string, settings: Settings): { tokens: number; cost: Cost; historyCount: number; summaryUsed: boolean; extraUnsummarised: number } | undefined {
     const { store, pricing } = this.deps;
     const contact = store.getContact(contactId);
     if (!contact) return undefined;
@@ -310,7 +310,7 @@ export class Engine {
     const built = buildContext(probe, contact, member, store.listContacts(), { lang: this.deps.lang() });
     const provider = account?.provider ?? "openai";
     const cost = computeCost(provider, { ...ZERO_USAGE, input: built.info.tokensEstimate, output: 400, estimated: true }, pricing.lookup(provider, contact.model), settings.usdToCny);
-    return { tokens: built.info.tokensEstimate, cost, historyCount: built.info.historyCount, summaryUsed: built.info.summaryUsed };
+    return { tokens: built.info.tokensEstimate, cost, historyCount: built.info.historyCount, summaryUsed: built.info.summaryUsed, extraUnsummarised: built.info.extraUnsummarised ?? 0 };
   }
 
   /** Text of a message as models see it (used by export). */

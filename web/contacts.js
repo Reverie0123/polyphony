@@ -59,6 +59,9 @@ export function openContacts(ctx) {
       edit.addEventListener("click", () => openContactForm(ctx, c, () => render(modal)));
       row.appendChild(edit);
       if (c.id !== "deskdock") {
+        const clone = document.createElement("button"); clone.className = "btn sm"; clone.textContent = "⧉"; clone.title = t("contacts.cloneRole");
+        clone.addEventListener("click", () => openContactForm(ctx, null, () => render(modal), { accountId: c.accountId, model: c.model, supportsTools: c.supportsTools, supportsVision: c.supportsVision, temperature: c.temperature, maxTokens: c.maxTokens }));
+        row.appendChild(clone);
         const rm = document.createElement("button"); rm.className = "btn sm danger"; rm.textContent = "✕";
         rm.addEventListener("click", async () => { if (!confirm(t("contacts.deleteContact"))) return; await del(`/api/contacts/${c.id}`); await ctx.reload(); render(modal); });
         row.appendChild(rm);
@@ -123,9 +126,9 @@ function openAccountForm(ctx, account, done) {
   });
 }
 
-function openContactForm(ctx, contact, done) {
+function openContactForm(ctx, contact, done, preset) {
   const accounts = ctx.accounts;
-  const c = contact ?? { accountId: accounts[0]?.id ?? "", model: "", nickname: "", avatar: "", persona: "", supportsTools: true, supportsVision: false, temperature: undefined, maxTokens: undefined, enabled: true };
+  const c = contact ?? { accountId: accounts[0]?.id ?? "", model: "", nickname: "", avatar: "", persona: "", supportsTools: true, supportsVision: false, temperature: undefined, maxTokens: undefined, enabled: true, ...(preset ?? {}) };
   const builtin = contact?.id === "deskdock";
   const html = builtin
     ? `${field(t("contacts.nickname"), `<input id="f-nick" value="${escapeHtml(c.nickname)}">`)}${field(t("contacts.avatar"), `<input id="f-avatar" value="${escapeHtml(c.avatar)}">`)}${field(t("contacts.persona"), `<textarea id="f-persona">${escapeHtml(c.persona)}</textarea>`)}<div class="hint">${escapeHtml(t("contacts.builtin"))}</div>`
@@ -205,6 +208,14 @@ export function openNewSession(ctx, onCreated) {
     ${field(t("new.kind"), `<select id="n-kind"><option value="direct">${escapeHtml(t("new.direct"))}</option><option value="group">${escapeHtml(t("new.group"))}</option></select>`)}
     <div class="field"><label>${escapeHtml(t("new.pick"))}</label><div class="pick-list" id="n-pick">${contacts.map((c) => `<div class="pick-row" data-id="${c.id}"><span class="avatar sm ${c.id === "deskdock" ? "deskdock" : ""}">${escapeHtml((c.avatar || c.nickname).slice(0, 2))}</span><span class="grow">${escapeHtml(c.nickname)}</span><span class="hint">${escapeHtml(c.model)}</span></div>`).join("")}</div></div>
     <div id="n-driver-field" class="field hidden"><label>${escapeHtml(t("dd.driver"))}</label><select id="n-driver">${drivers(ctx).map((c) => `<option value="${c.id}">${escapeHtml(c.nickname)}</option>`).join("")}</select></div>
+    <div id="n-roles" class="hidden" style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:12px">
+      <div class="section-title" style="margin-top:0">${escapeHtml(t("roles.generate"))}</div>
+      <div class="hint" style="margin-bottom:8px">${escapeHtml(t("roles.hint"))}</div>
+      <div class="row">
+        ${field(t("roles.base"), `<select id="n-base">${contacts.filter((c) => c.id !== "deskdock").map((c) => `<option value="${c.id}">${escapeHtml(c.nickname)} · ${escapeHtml(c.model)}</option>`).join("")}</select>`)}
+        <div class="field"><label>&nbsp;</label><button class="btn" id="n-make-roles">${escapeHtml(t("roles.make"))}</button></div>
+      </div>
+    </div>
     <div id="n-group-fields" class="hidden">
       ${field(t("disc.template"), `<select id="n-template"><option value="">${escapeHtml(t("disc.templateNone"))}</option>${templates().map((tp) => `<option value="${tp.id}">${escapeHtml(tp.name)} · ${escapeHtml(tp.hint)}</option>`).join("")}</select>`, t("disc.applyHint"))}
       <div class="warn-text hidden" id="n-template-hint" style="margin:-6px 0 10px"></div>
@@ -230,7 +241,12 @@ export function openNewSession(ctx, onCreated) {
           const tp = templates().find((x) => x.id === q("#n-template").value);
           const driverId = q("#n-driver").value;
           let roleIndex = 0;
-          const members = [...picked].map((contactId) => ({ contactId, roleCard: contactId === "deskdock" ? "" : (tp?.roles[roleIndex++] ?? ""), driverContactId: contactId === "deskdock" ? driverId : undefined }));
+          const members = [...picked].map((contactId) => {
+            const c = ctx.contacts.find((x) => x.id === contactId);
+            const role = contactId === "deskdock" ? "" : (tp?.roles[roleIndex++] ?? "");
+            // A generated role already carries the text as its persona; repeating it as a role card would double it.
+            return { contactId, roleCard: c && c.persona === role ? "" : role, driverContactId: contactId === "deskdock" ? driverId : undefined };
+          });
           if (!members.length) throw new Error(t("new.pick"));
           const body = { kind, members, title: q("#n-title").value.trim(), intro: q("#n-intro").value || (kind === "group" && tp ? tp.intro : ""), templateId: tp?.id };
           const perRound = Number(q("#n-per-round").value);
@@ -252,7 +268,35 @@ export function openNewSession(ctx, onCreated) {
         if (tp && !intro.value) intro.value = tp.intro;
         templateHint();
       });
-      const sync = () => modal.querySelector("#n-group-fields").classList.toggle("hidden", kindSel.value !== "group");
+      const sync = () => { modal.querySelector("#n-group-fields").classList.toggle("hidden", kindSel.value !== "group"); modal.querySelector("#n-roles").classList.toggle("hidden", kindSel.value !== "group"); };
+      modal.querySelector("#n-make-roles").addEventListener("click", async (e) => {
+        e.preventDefault();
+        const tp = templates().find((x) => x.id === modal.querySelector("#n-template").value);
+        if (!tp) { ctx.toast(t("disc.templateNone"), true); return; }
+        const base = ctx.contacts.find((c) => c.id === modal.querySelector("#n-base").value);
+        if (!base) return;
+        const btn = e.currentTarget; btn.disabled = true;
+        try {
+          const made = [];
+          for (let i = 0; i < tp.roles.length; i++) {
+            const nickname = tp.names?.[i] ?? `${base.nickname} ${i + 1}`;
+            const existing = ctx.contacts.find((c) => c.nickname === nickname && c.accountId === base.accountId && c.model === base.model);
+            const c = existing ?? await post("/api/contacts", { accountId: base.accountId, model: base.model, nickname, avatar: nickname.slice(0, 1), persona: tp.roles[i], supportsTools: base.supportsTools, supportsVision: base.supportsVision, temperature: base.temperature ?? null, maxTokens: base.maxTokens ?? null });
+            made.push(c);
+          }
+          await ctx.reload();
+          // Rebuild the pick list with the new contacts and select the roles in template order.
+          const list = ctx.contacts.filter((c) => c.enabled);
+          pick.innerHTML = list.map((c) => `<div class="pick-row" data-id="${c.id}"><span class="avatar sm ${c.id === "deskdock" ? "deskdock" : ""}">${escapeHtml((c.avatar || c.nickname).slice(0, 2))}</span><span class="grow">${escapeHtml(c.nickname)}</span><span class="hint">${escapeHtml(c.model)}</span></div>`).join("");
+          picked.clear();
+          for (const c of made) picked.add(c.id);
+          const intro = modal.querySelector("#n-intro");
+          if (!intro.value) intro.value = tp.intro;
+          if (!modal.querySelector("#n-title").value) modal.querySelector("#n-title").value = tp.name;
+          paint();
+          ctx.toast(t("roles.made", { n: made.length }));
+        } catch (err) { ctx.toast(err.message, true); } finally { btn.disabled = false; }
+      });
       kindSel.addEventListener("change", () => { if (kindSel.value === "direct" && picked.size > 1) { const first = [...picked][0]; picked.clear(); picked.add(first); paint(); } sync(); });
       const templateHint = () => {
         const tp = templates().find((x) => x.id === modal.querySelector("#n-template").value);

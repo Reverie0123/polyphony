@@ -213,7 +213,7 @@ export interface Message {
   usage?: Usage;
   cost?: Cost;
   /** How many history messages and whether a summary were sent for this reply. */
-  contextInfo?: { historyCount: number; summaryUsed: boolean; tokensEstimate: number };
+  contextInfo?: { historyCount: number; summaryUsed: boolean; tokensEstimate: number; extraUnsummarised?: number };
   status: MessageStatus;
   error?: { code: string; message: string };
   createdAt: string;
@@ -250,6 +250,9 @@ export interface Settings {
   concurrency: number;
   /** Path to the deskdock executable or its dist/index.js; empty means look on PATH. */
   deskdockCommand: string;
+  /** Streaming watchdog: minutes without data before a reply is cut, and the total cap per reply. */
+  streamIdleMinutes: number;
+  streamTotalMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -269,6 +272,8 @@ export const DEFAULT_SETTINGS: Settings = {
   cliEnabled: false,
   concurrency: 4,
   deskdockCommand: "",
+  streamIdleMinutes: 5,
+  streamTotalMinutes: 30,
 };
 
 export const DEFAULT_CONTEXT: ContextConfig = { recentCount: 12, recentTokens: 6000 };

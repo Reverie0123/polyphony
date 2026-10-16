@@ -1,6 +1,6 @@
 # Polyphony
 
-Pull several AI models into one group chat, WeChat style: @mention who should answer, reply to a specific message, and see the price on every reply. Optional "free discussion for N rounds" lets them review each other; add [DeskDock](https://github.com/Reverie0123/deskdock) to the group and one member can operate your Windows desktop.
+Pull several AI roles into one group chat, WeChat style: @mention who should answer, reply to a specific message, and see the price on every reply. **One API key is enough**: the same model with different personas makes different members (writer, reviewer, judge…); keys from several vendors can be mixed in too. Optional "free discussion for N rounds" lets them review each other; add [DeskDock](https://github.com/Reverie0123/deskdock) to the group and one member can operate your Windows desktop.
 
 [中文说明](README.zh.md)
 
@@ -8,7 +8,7 @@ Pull several AI models into one group chat, WeChat style: @mention who should an
 
 ## What it is
 
-- **A contact is one concrete model**: DeepSeek, any OpenAI-compatible endpoint, Anthropic, local Ollama, or the `claude` / `codex` CLI already logged in on your machine (uses your subscription; both vendors reserve subscriptions for their own products and Anthropic has blocked third-party tools from using subscription tokens since 2026-04-04, so this type only runs the official command, never touches tokens, and is off by default).
+- **A contact is one role**: account + model + persona. One model can play several roles (generated from a template when you create a group), or every role can use a different vendor. Supports DeepSeek, any OpenAI-compatible endpoint, Anthropic, local Ollama, or the `claude` / `codex` CLI already logged in on your machine (uses your subscription; both vendors reserve subscriptions for their own products and Anthropic has blocked third-party tools from using subscription tokens since 2026-04-04, so this type only runs the official command, never touches tokens, and is off by default).
 - **Groups**: a description ("review my paper", "play Werewolf"), a role card per member, a budget per round.
 - **@ to speak**: nobody answers unless mentioned. Reply to a message and the mentioned model receives that original text.
 - **Cost, clearly**: every reply shows the price, input/output/cached tokens and latency; the side panel shows session, daily and per-provider totals.
