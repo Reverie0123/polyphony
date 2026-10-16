@@ -100,7 +100,16 @@ export function openWindow(url: string, dir: string): void {
     if (edge) {
       const profile = path.join(dir, "edge-profile");
       mkdirSync(profile, { recursive: true });
-      spawn(edge, [`--app=${url}`, `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--window-size=1200,820"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+      // A profile of its own keeps the window separate from the user's Edge. Sync, sign-in and extensions are
+      // switched off: otherwise Edge signs the new profile into the Windows account, syncs the user's extensions
+      // into it and opens their welcome pages in a second, ordinary browser window next to the app window.
+      // Background mode is off so the process ends when the window closes.
+      spawn(edge, [
+        `--app=${url}`, `--user-data-dir=${profile}`,
+        "--no-first-run", "--no-default-browser-check", "--disable-sync", "--disable-extensions",
+        "--disable-background-mode", "--disable-features=msImplicitSignin,msSeamlessWebToBrowserSignIn",
+        "--window-size=1200,820",
+      ], { detached: true, stdio: "ignore" }).unref();
       return;
     }
     spawn("cmd.exe", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
