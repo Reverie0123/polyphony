@@ -20,11 +20,16 @@ export function openModal(ctx, { title, bodyHtml, wide, buttons, onOpen }) {
     foot.appendChild(el);
   }
   modal.querySelector("[data-close]").addEventListener("click", close);
-  const onKey = (e) => { if (e.key === "Escape" && root.lastElementChild === modal) { close(); } };
+  const onKey = (e) => { if (e.key === "Escape" && !e.isComposing && root.lastElementChild === modal) { close(); } };
   document.addEventListener("keydown", onKey);
-  const onOverlay = (e) => { if (e.target === root && root.lastElementChild === modal) close(); };
+  // Dragging to select text inside the dialog and releasing over the overlay fires a "click" on the overlay;
+  // the dialog closes only when the press started on the overlay as well.
+  let pressedOnOverlay = false;
+  const onDown = (e) => { pressedOnOverlay = e.target === root; };
+  const onOverlay = (e) => { if (e.target === root && pressedOnOverlay && root.lastElementChild === modal) close(); pressedOnOverlay = false; };
+  root.addEventListener("pointerdown", onDown);
   root.addEventListener("click", onOverlay);
-  cleanup = () => { document.removeEventListener("keydown", onKey); root.removeEventListener("click", onOverlay); };
+  cleanup = () => { document.removeEventListener("keydown", onKey); root.removeEventListener("pointerdown", onDown); root.removeEventListener("click", onOverlay); };
   root.appendChild(modal);
   onOpen?.(modal, close);
   return { modal, close };
