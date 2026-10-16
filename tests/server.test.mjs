@@ -139,7 +139,7 @@ test("preview reports targets, hosts and estimates", async () => {
   }
 });
 
-test("regenerate folds the old version away and excludes it from context", async () => {
+test("regenerate streams into the same message; the old text folds under it as a previous version", async () => {
   const srv = await startServer();
   try {
     const { contact } = await fakeAccountAndContact(srv.api, srv.store);
@@ -148,12 +148,28 @@ test("regenerate folds the old version away and excludes it from context", async
     const first = (await srv.waitFor((e, d) => e === "message.done" && d.message.sender === contact.id)).data.message;
     const r = await srv.api("POST", `/api/sessions/${s.id}/messages/${first.id}/regenerate`);
     assert.equal(r.status, 200);
-    const second = (await srv.waitFor((e, d) => e === "message.done" && d.message.sender === contact.id && d.message.id !== first.id)).data.message;
+    const again = (await srv.waitFor((e, d) => e === "message.done" && d.message.sender === contact.id && d.message.id === first.id && d.message.versions?.length === 1)).data.message;
     const full = (await srv.api("GET", `/api/sessions/${s.id}`)).data;
-    const old = full.messages.find((m) => m.id === first.id);
-    assert.equal(old.excludedFromContext, true);
-    assert.equal(old.versions.length, 1);
-    assert.equal(second.contextInfo.historyCount, 1, "old reply is not in the new context");
+    assert.equal(full.messages.filter((m) => m.sender === contact.id).length, 1, "no second message is created");
+    assert.equal(again.versions[0].text, first.text, "old text is kept as a version");
+    assert.equal(again.excludedFromContext, false);
+    assert.ok(again.regeneratedAt);
+    assert.equal(again.contextInfo.historyCount, 1, "the message being regenerated is not in its own context");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("deleting a session marks it dead: a late save does not resurrect the file", async () => {
+  const srv = await startServer();
+  try {
+    const { contact } = await fakeAccountAndContact(srv.api, srv.store);
+    const s = (await srv.api("POST", "/api/sessions", { kind: "direct", members: [{ contactId: contact.id }] })).data;
+    const live = srv.store.getSession(s.id);
+    assert.equal((await srv.api("DELETE", `/api/sessions/${s.id}`)).status, 200);
+    srv.store.saveSession(live); // what a loop still holding the object would do
+    assert.equal(srv.store.getSession(s.id), undefined);
+    assert.equal((await srv.api("GET", `/api/sessions/${s.id}`)).status, 404);
   } finally {
     await srv.close();
   }

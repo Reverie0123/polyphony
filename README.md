@@ -8,7 +8,7 @@ Pull several AI models into one group chat, WeChat style: @mention who should an
 
 ## What it is
 
-- **A contact is one concrete model**: DeepSeek, any OpenAI-compatible endpoint, Anthropic, local Ollama, or the `claude` / `codex` CLI already logged in on your machine (uses your subscription).
+- **A contact is one concrete model**: DeepSeek, any OpenAI-compatible endpoint, Anthropic, local Ollama, or the `claude` / `codex` CLI already logged in on your machine (uses your subscription; both vendors reserve subscriptions for their own products and Anthropic has blocked third-party tools from using subscription tokens since 2026-04-04, so this type only runs the official command, never touches tokens, and is off by default).
 - **Groups**: a description ("review my paper", "play Werewolf"), a role card per member, a budget per round.
 - **@ to speak**: nobody answers unless mentioned. Reply to a message and the mentioned model receives that original text.
 - **Cost, clearly**: every reply shows the price, input/output/cached tokens and latency; the side panel shows session, daily and per-provider totals.
@@ -19,11 +19,11 @@ Pull several AI models into one group chat, WeChat style: @mention who should an
 
 1. **Installer**: download `Polyphony-Setup-x.y.z.exe` from Releases; per-user install, no admin rights, bundles a portable Node.
 2. **One script**: `powershell -ExecutionPolicy Bypass -File install.ps1` downloads a portable Node if needed, installs into `%LOCALAPPDATA%\polyphony` and adds a Start Menu entry.
-3. **Node 22+ already installed**: `npx polyphony-chat`.
+3. **Node 22+ already installed (24 recommended)**: `npx polyphony-chat`.
 
-It starts a local server on port 7331 and opens an Edge app window. Data lives in `%APPDATA%\Polyphony\` (override with `POLYPHONY_HOME`); API keys never leave the machine. Settings can check for updates and enable LAN access (a QR code with the token, for a phone on the same Wi-Fi).
+It starts a local server on port 7331 and opens an Edge app window. Data lives in `%APPDATA%\Polyphony\` (override with `POLYPHONY_HOME`); API keys are stored only on this machine and sent only to the endpoint you configured. Settings can check for updates and enable LAN access (a QR code with the token, for a phone on the same Wi-Fi).
 
-Flags: `--no-open`, `--port`, `--data-dir`, `--reset-token`.
+Flags: `--no-open`, `--port`, `--data-dir`, `--reset-token`, `--stop`, `--force`, `--no-exit`, `--no-update-check`.
 
 ## DeskDock
 

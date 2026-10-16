@@ -35,6 +35,7 @@ const T = {
     reasons: { rounds: "轮数到", noObjection: "全员无异议", repeat: "发言开始重复", budget: "超出预算", user: "你停止了", end: "成员宣布结束", noSpeakers: "没有可以发言的成员" },
     mentionAsk: (from: string, to: string) => `${from} 想让 ${to} 接话`,
     mentionAuto: (from: string, to: string) => `${from} @ 了 ${to}，${to} 补一句`,
+    mentionChainLimit: (from: string, to: string) => `${from} @ 了 ${to}，但模型之间已经连续接话 2 次，先停一下，等你说话`,
     mentionTurn: (from: string) => `${from} 刚才 @ 了你，请简短回应。`,
     summarize: "讨论已结束。请只做总结，分三块各用要点列出：共识、最强分歧、待办。不要加别的。",
     hostAsk: (names: string[]) => `你是主持人。根据刚才的讨论，决定下一个该谁发言。候选：${names.join("、")}。只回复一个昵称，不要解释。`,
@@ -51,6 +52,7 @@ const T = {
     reasons: { rounds: "all rounds done", noObjection: "nobody objected", repeat: "speakers started repeating themselves", budget: "budget exceeded", user: "you stopped it", end: "a member ended it", noSpeakers: "no member can speak" },
     mentionAsk: (from: string, to: string) => `${from} wants ${to} to respond`,
     mentionAuto: (from: string, to: string) => `${from} mentioned ${to}; ${to} adds a word`,
+    mentionChainLimit: (from: string, to: string) => `${from} mentioned ${to}, but models have already passed the word 2 times in a row; waiting for you`,
     mentionTurn: (from: string) => `${from} just mentioned you; respond briefly.`,
     summarize: "The discussion is over. Summarise only, in three bullet lists: consensus, strongest disagreement, action items. Nothing else.",
     hostAsk: (names: string[]) => `You are the host. Based on the discussion so far, pick who speaks next. Candidates: ${names.join(", ")}. Reply with one nickname only.`,
@@ -62,6 +64,9 @@ export class Orchestrator {
   private loops = new Map<string, Promise<void>>();
   private wakeups = new Map<string, () => void>();
   private mentionBudget = new Map<string, Set<string>>(); // sessionId -> contacts already auto-mentioned this round
+  /** sessionId -> how many automatic model-to-model hand-offs happened since the user last spoke (outside a discussion there is no round to bound them) */
+  private autoChain = new Map<string, number>();
+  static readonly MAX_AUTO_CHAIN = 2;
 
   constructor(private deps: OrchestratorDeps) {}
 
@@ -130,6 +135,8 @@ export class Orchestrator {
     if (!d || (d.status !== "running" && d.status !== "paused")) return;
     d.status = "stopped";
     d.stopReason = reason;
+    // stop means stop: the reply that is streaming right now is cancelled too (and stops billing)
+    for (const m of session.messages) if (m.status === "streaming" && m.sender !== "user") this.deps.engine.cancel(m.id);
     this.deps.store.saveSession(session);
     this.wakeups.get(session.id)?.();
     if (!this.loops.has(session.id)) void this.finish(session);
@@ -205,6 +212,8 @@ export class Orchestrator {
     while (true) {
       const d = session.discussion;
       if (!d) return;
+      // The session may have been deleted while a turn was running; never bring it back by saving.
+      if (!store.getSession(session.id)) return;
       if (d.status === "paused") { await this.waitWhilePaused(session); continue; }
       if (d.status !== "running") break;
       if (d.currentRound > d.rounds) { d.status = "stopped"; d.stopReason = "rounds"; break; }
@@ -277,6 +286,7 @@ export class Orchestrator {
         await this.sleep(session, gap);
       }
     }
+    if (!store.getSession(session.id)) return;
     store.saveSession(session);
     await this.finish(session);
   }
@@ -317,7 +327,8 @@ export class Orchestrator {
     const t = this.t();
     if (d.summarizerContactId && d.stopReason !== "user") {
       const question = session.messages.find((m) => m.id === d.questionMessageId);
-      const m = await this.deps.engine.reply(session, d.summarizerContactId, question, { instruction: t.summarize, discussion: { question: d.question, round: d.currentRound, rounds: d.rounds, canEnd: false } });
+      // the summarizer only summarizes: no discussion rules (they would tell it to answer [no objection])
+      const m = await this.deps.engine.reply(session, d.summarizerContactId, question, { instruction: t.summarize });
       if (m.cost) d.spent += m.cost.usd;
     }
     d.status = "done";
@@ -332,6 +343,9 @@ export class Orchestrator {
 
   // ----- model-to-model mentions -----
 
+  /** The user spoke: automatic hand-offs may start again. */
+  userSpoke(sessionId: string): void { this.autoChain.delete(sessionId); }
+
   /** Called after every model reply: a reply that mentions another member either triggers it or asks the user. */
   async onReply(session: Session, m: Message): Promise<void> {
     if (session.kind !== "group" || m.sender === "user" || m.sender === "system" || m.status !== "done") return;
@@ -343,7 +357,14 @@ export class Orchestrator {
     for (const to of targets) {
       if (budget.has(to)) continue;
       budget.add(to);
+      const inDiscussion = !!session.discussion && session.discussion.status === "running";
+      const depth = this.autoChain.get(session.id) ?? 0;
+      if (session.allowModelMentions && to !== DESKDOCK_CONTACT_ID && !inDiscussion && depth >= Orchestrator.MAX_AUTO_CHAIN) {
+        this.notice(session, this.t().mentionChainLimit(this.nick(m.sender), this.nick(to)));
+        continue;
+      }
       if (session.allowModelMentions && to !== DESKDOCK_CONTACT_ID) {
+        if (!inDiscussion) this.autoChain.set(session.id, depth + 1);
         this.notice(session, this.t().mentionAuto(this.nick(m.sender), this.nick(to)));
         await this.deps.engine.reply(session, to, m, { instruction: this.t().mentionTurn(this.nick(m.sender)) });
       } else {

@@ -35,6 +35,10 @@ export interface ServerOptions {
   resetToken?: () => string;
   token: string;
   lanToken?: string;
+  /** true only when the server is actually bound to 0.0.0.0 (the lanAccess setting takes effect after a restart) */
+  lanActive?: boolean;
+  /** UI language resolver (settings.lang with auto) */
+  lang?: () => "zh" | "en";
   version: string;
   webDir?: string;
   /** Called whenever the number of connected pages changes. */
@@ -185,8 +189,10 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         contacts: store.listContacts(),
         sessions: store.listSessions(),
         pricingFetchedAt: pricing.onlineFetchedAt,
-        lanAddresses: store.getSettings().lanAccess ? [...localAddresses()].filter((a) => /^\d/.test(a) && a !== "127.0.0.1") : [],
-        lanToken: store.getSettings().lanAccess ? opts.lanToken ?? null : null,
+        lanAddresses: opts.lanActive ? [...localAddresses()].filter((a) => /^\d/.test(a) && a !== "127.0.0.1") : [],
+        lanToken: opts.lanActive ? opts.lanToken ?? null : null,
+        lanActive: opts.lanActive ?? false,
+        warnings: store.corruptFiles.map((f) => ({ code: "corrupt_file", file: f })),
         update: opts.updater?.info ?? null,
       });
     }
@@ -371,6 +377,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
           intro: str(b.intro),
           members,
           budget: typeof b.budget === "object" && b.budget ? (b.budget as Session["budget"]) : {},
+          templateId: str(b.templateId) || undefined,
         });
         hub.broadcast("session.created", { session: withoutMessages(s) });
         return json(res, 200, s);
@@ -403,18 +410,21 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         return json(res, 200, s);
       }
       if (method === "DELETE" && parts.length === 3) {
-        for (const m of s.messages) engine.cancel(m.id);
+        // stop everything that still holds this session object, or a later saveSession would resurrect the file
+        orchestrator.drop(s);
+        for (const m of s.messages) { engine.cancel(m.id); deskdock.cancel(m.id); }
         const ok = store.deleteSession(id);
         hub.broadcast("session.deleted", { sessionId: id });
         return json(res, 200, { ok });
       }
       if (parts[3] === "export" && method === "GET") {
-        const md = exportMarkdown(s, store.listContacts(), (m) => engine.textOf(m), store.getSettings());
+        const md = exportMarkdown(s, store.listContacts(), (m) => engine.textOf(m), store.getSettings(), opts.lang?.() ?? "zh");
         res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(s.title.replace(/[\\/:*?"<>|]/g, "_"))}.md` });
         res.end(md);
         return;
       }
       if (parts[3] === "messages" && method === "POST" && parts.length === 4) {
+        orchestrator.userSpoke(s.id);
         const b = await readBody(req);
         const text = str(b.text).trim();
         const hashes = Array.isArray(b.attachments) ? (b.attachments as unknown[]).filter((x): x is string => typeof x === "string") : [];
@@ -531,12 +541,11 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         const m = s.messages.find((x) => x.id === mid);
         if (!m || m.sender === "user" || m.sender === "system") throw new HttpError(404, "message not found", "not_found");
         if (m.status === "streaming") throw new HttpError(409, "still streaming", "busy");
-        m.versions = [...(m.versions ?? []), { text: m.text, usage: m.usage, cost: m.cost, createdAt: m.createdAt }];
-        m.excludedFromContext = true;
-        store.saveSession(s);
-        hub.broadcast("message.updated", { sessionId: s.id, message: m });
         const trigger = m.replyTo ? s.messages.find((x) => x.id === m.replyTo) : undefined;
-        void engine.reply(s, m.sender, trigger);
+        if (m.sender === DESKDOCK_CONTACT_ID) { void deskdock.runTask(s, trigger); return json(res, 200, { ok: true }); } // a task runs again as a new steps message
+        // regenerate in place: the old text folds under the same message as a previous version
+        m.versions = [...(m.versions ?? []), { text: m.text, usage: m.usage, cost: m.cost, createdAt: m.regeneratedAt ?? m.createdAt }];
+        void engine.reply(s, m.sender, trigger, { reuse: m });
         return json(res, 200, { ok: true });
       }
       if (parts[3] === "preview" && method === "POST") {
@@ -638,32 +647,37 @@ function withoutMessages(s: Session): Omit<Session, "messages"> {
   return rest;
 }
 
-export function exportMarkdown(s: Session, contacts: Contact[], textOf: (m: Message) => string, settings: Settings): string {
-  const nick = (id: string) => (id === "user" ? "我" : id === "system" ? "系统" : contacts.find((c) => c.id === id)?.nickname ?? id);
+const EXPORT_T = {
+  zh: { me: "我", system: "系统", subscription: "订阅", free: "免费", unpriced: "未定价", members: "成员：", sep: "、", whisper: "悄悄话", excluded: "已移出共享历史", edited: "编辑重发", forwarded: "转发", previous: "上一版" },
+  en: { me: "Me", system: "System", subscription: "subscription", free: "free", unpriced: "unpriced", members: "Members: ", sep: ", ", whisper: "whisper", excluded: "removed from shared history", edited: "edited and resent", forwarded: "forwarded", previous: "previous version" },
+};
+export function exportMarkdown(s: Session, contacts: Contact[], textOf: (m: Message) => string, settings: Settings, lang: "zh" | "en" = "zh"): string {
+  const L = EXPORT_T[lang];
+  const nick = (id: string) => (id === "user" ? L.me : id === "system" ? L.system : contacts.find((c) => c.id === id)?.nickname ?? id);
   const cny = settings.currency === "cny";
   const money = (m: Message) => {
     if (!m.cost) return "";
-    if (m.cost.kind === "subscription") return "订阅";
-    if (m.cost.kind === "free") return "免费";
-    if (!m.cost.priced) return "未定价";
+    if (m.cost.kind === "subscription") return L.subscription;
+    if (m.cost.kind === "free") return L.free;
+    if (!m.cost.priced) return L.unpriced;
     return cny ? `¥${m.cost.cny.toFixed(4)}` : `$${m.cost.usd.toFixed(4)}`;
   };
   const lines: string[] = [`# ${s.title}`, ""];
   if (s.intro) lines.push(`> ${s.intro}`, "");
-  lines.push(`成员：${s.members.map((m) => nick(m.contactId)).join("、")}`, "");
+  lines.push(`${L.members}${s.members.map((m) => nick(m.contactId)).join(L.sep)}`, "");
   for (const m of s.messages) {
     const when = m.createdAt.replace("T", " ").slice(0, 19);
     const flags: string[] = [];
-    if (m.privateTo?.length) flags.push("悄悄话");
-    if (m.excludedFromContext) flags.push("已移出共享历史");
-    if (m.editedFrom) flags.push("编辑重发");
-    if (m.forwardedFrom) flags.push("转发");
+    if (m.privateTo?.length) flags.push(L.whisper);
+    if (m.excludedFromContext) flags.push(L.excluded);
+    if (m.editedFrom) flags.push(L.edited);
+    if (m.forwardedFrom) flags.push(L.forwarded);
     if (m.status === "error") flags.push(`出错：${m.error?.message ?? ""}`);
     if (m.status === "cancelled") flags.push("已取消");
     const meta = [when, money(m), m.usage ? `输入 ${m.usage.input + m.usage.cacheRead} / 输出 ${m.usage.output}` : "", ...flags].filter(Boolean).join(" · ");
     lines.push(`### ${nick(m.sender)}`, `<sub>${meta}</sub>`, "");
     lines.push(textOf(m) || "（空）", "");
-    for (const v of m.versions ?? []) lines.push("<details><summary>上一版</summary>", "", v.text, "", "</details>", "");
+    for (const v of m.versions ?? []) lines.push(`<details><summary>${L.previous}</summary>`, "", v.text, "", "</details>", "");
   }
   return lines.join("\n");
 }

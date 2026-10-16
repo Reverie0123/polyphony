@@ -12,7 +12,7 @@ const zh = [
     ],
   },
   {
-    id: "debate", name: "正反方", hint: "正方、反方、裁判",
+    id: "debate", name: "正反方", hint: "正方、反方、裁判（裁判最后一轮才说话）", minRounds: 2,
     intro: "就用户给的议题进行辩论。",
     roles: [
       "你是正方。坚定支持议题，每轮给出一个新论据或反驳对方上一轮的论点，不重复。",
@@ -21,7 +21,7 @@ const zh = [
     ],
   },
   {
-    id: "council", name: "议会", hint: "各自独立回答、互评、主席综合",
+    id: "council", name: "议会", hint: "各自独立回答、互评、主席综合（需要 3 轮）", minRounds: 3,
     intro: "对用户的问题给出高质量答案。",
     roles: [
       "你是议员甲。第一轮独立回答问题；第二轮匿名评价其他人的回答并打分；之后只回 [无异议]。",
@@ -51,7 +51,7 @@ const en = [
     ],
   },
   {
-    id: "debate", name: "Debate", hint: "pro, con, judge",
+    id: "debate", name: "Debate", hint: "pro, con, judge (the judge speaks in the last round)", minRounds: 2,
     intro: "Debate the user's motion.",
     roles: [
       "You argue FOR the motion. Each round add one new argument or rebut the other side's last point; never repeat.",
@@ -60,7 +60,7 @@ const en = [
     ],
   },
   {
-    id: "council", name: "Council", hint: "independent answers, peer review, chair synthesis",
+    id: "council", name: "Council", hint: "independent answers, peer review, chair synthesis (needs 3 rounds)", minRounds: 3,
     intro: "Give the user a high-quality answer.",
     roles: [
       "You are council member A. Round 1: answer independently. Round 2: review and score the others anonymously. Afterwards reply [no objection].",

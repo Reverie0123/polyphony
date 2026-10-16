@@ -27,9 +27,23 @@ export interface EngineDeps {
 }
 
 export interface ReplyOptions {
+  /** regenerate in place: this existing message is reset and streamed into again (its old text was pushed to versions by the caller) */
+  reuse?: Message;
   round?: number;
   instruction?: string;
   discussion?: { question: string; round: number; rounds: number; canEnd: boolean };
+}
+
+/** Clears a message for in-place regeneration; its position (seq, createdAt) is kept so the old text folds under the new one. */
+function resetForRegeneration(m: Message, trigger: Message | undefined, model: string | undefined): Message {
+  m.text = "";
+  delete m.reasoning; delete m.usage; delete m.cost; delete m.error; delete m.contextInfo;
+  m.status = "streaming";
+  m.excludedFromContext = false;
+  if (trigger) m.replyTo = trigger.id;
+  if (model) m.model = model;
+  m.regeneratedAt = new Date().toISOString();
+  return m;
 }
 
 export class Engine {
@@ -118,7 +132,7 @@ export class Engine {
     const purpose = "reply" as const;
     const contact = store.getContact(contactId);
     const settings = store.getSettings();
-    const msg = store.appendMessage(session, {
+    const msg = opts.reuse ? resetForRegeneration(opts.reuse, trigger, contact?.model) : store.appendMessage(session, {
       sender: contactId,
       kind: "text",
       text: "",
@@ -132,7 +146,8 @@ export class Engine {
       round: opts.round,
       model: contact?.model,
     });
-    broadcast("message.created", { sessionId: session.id, message: msg });
+    if (opts.reuse) store.saveSession(session);
+    broadcast(opts.reuse ? "message.updated" : "message.created", { sessionId: session.id, message: msg });
 
     const fail = (code: string, message: string) => {
       msg.status = "error";
@@ -144,7 +159,7 @@ export class Engine {
     };
 
     if (!contact || !contact.enabled) return fail("no_contact", "contact missing or disabled");
-    if (contact.id === DESKDOCK_CONTACT_ID) return fail("not_implemented", "DeskDock member arrives in a later phase");
+    if (contact.id === DESKDOCK_CONTACT_ID) return fail("wrong_runner", "DeskDock replies are produced by its task runner (mention @DeskDock), not by a plain reply");
     const account = store.getAccount(contact.accountId);
     if (!account || !account.enabled) return fail("no_account", "account missing or disabled");
     if (account.provider === "cli" && !settings.cliEnabled) return fail("cli_disabled", "local CLI contacts are disabled in settings");

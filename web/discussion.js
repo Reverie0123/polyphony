@@ -4,6 +4,7 @@ import { escapeHtml } from "./markdown.js";
 import { post, patch } from "./api.js";
 import { openModal } from "./modal.js";
 import { formatCost } from "./chat.js";
+import { templates } from "./templates.js";
 
 export function openDiscussion(ctx, session) {
   const members = session.members.map((m) => ctx.contacts.find((c) => c.id === m.contactId)).filter((c) => c && c.id !== "deskdock");
@@ -12,10 +13,13 @@ export function openDiscussion(ctx, session) {
   const money = (usd) => (usd ? formatCost({ usd, cny: usd * ctx.settings.usdToCny, priced: true, kind: "metered" }, ctx.settings) : t("disc.noBudget"));
   const f = (label, input, hint) => `<div class="field"><label>${escapeHtml(label)}</label>${input}${hint ? `<div class="hint">${escapeHtml(hint)}</div>` : ""}</div>`;
   const opts = (sel) => `<option value="">${escapeHtml(t("disc.none"))}</option>` + members.map((c) => `<option value="${c.id}" ${sel === c.id ? "selected" : ""}>${escapeHtml(c.nickname)}</option>`).join("");
+  const tp = templates().find((x) => x.id === session.templateId);
+  const minRounds = tp?.minRounds ?? 1;
   const html = `
+    ${minRounds > 1 ? `<div class="notice-box">${escapeHtml(t("disc.minRounds", { n: minRounds }))}</div>` : ""}
     ${f(t("disc.question"), `<textarea id="d-q">${escapeHtml(lastUser?.text ?? "")}</textarea>`, t("disc.questionHint"))}
     <div class="row">
-      ${f(t("disc.rounds"), `<input id="d-rounds" type="number" min="1" max="50" value="3">`)}
+      ${f(t("disc.rounds"), `<input id="d-rounds" type="number" min="${minRounds}" max="50" value="${Math.max(3, minRounds)}">`)}
       ${f(t("disc.summarizer"), `<select id="d-sum">${opts("")}</select>`)}
     </div>
     ${session.speakingOrder === "host" ? f(t("disc.host"), `<select id="d-host">${opts("")}</select>`) : ""}
@@ -32,7 +36,7 @@ export function openDiscussion(ctx, session) {
           const q = (id) => modal.querySelector(id);
           const canEnd = [...modal.querySelectorAll("[data-canend]")].filter((x) => x.checked).map((x) => x.dataset.canend);
           await patch(`/api/sessions/${session.id}`, { canEndDiscussion: canEnd });
-          const body = { question: q("#d-q").value.trim(), rounds: Number(q("#d-rounds").value) || 3, summarizerContactId: q("#d-sum").value || undefined, hostContactId: q("#d-host")?.value || undefined };
+          const body = { question: q("#d-q").value.trim(), rounds: Math.max(minRounds, Number(q("#d-rounds").value) || 3), summarizerContactId: q("#d-sum").value || undefined, hostContactId: q("#d-host")?.value || undefined };
           const d = await post(`/api/sessions/${session.id}/discussion`, body);
           session.discussion = d;
           renderDiscBar(ctx, session);

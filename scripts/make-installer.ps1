@@ -31,13 +31,21 @@ sh.Run """" & dir & "node.exe"" """ & dir & "dist\index.js""", 0, False
 '@ | Set-Content (Join-Path $stage "launch.vbs") -Encoding ASCII
 "@echo off`r`n""%~dp0node.exe"" ""%~dp0dist\index.js"" %*" | Set-Content (Join-Path $stage "polyphony.cmd") -Encoding ASCII
 
+# The tracked .iss stays untouched: a copy with the version and absolute paths filled in is written under build\.
 # Inno reads UTF-8 only with a BOM; Set-Content -Encoding UTF8 writes one, which also keeps the Chinese messages intact.
-(Get-Content installer\polyphony.iss -Raw -Encoding UTF8) -replace '#define AppVersion ".*"', "#define AppVersion `"$version`"" | Set-Content installer\polyphony.iss -Encoding UTF8 -NoNewline
+$issBuild = Join-Path $root "build\polyphony.iss"
+$iss = Get-Content installer\polyphony.iss -Raw -Encoding UTF8
+$iss = $iss -replace '#define AppVersion ".*"', "#define AppVersion `"$version`""
+$iss = $iss -replace '#define Stage ".*"', "#define Stage `"$stage`""
+$iss = $iss -replace 'OutputDir=.*', "OutputDir=$root\dist-installer"
+$iss = $iss -replace 'SetupIconFile=.*', "SetupIconFile=$root\resources\polyphony.ico"
+$iss = $iss -replace 'MessagesFile: "\.\.\\build\\lang\\ChineseSimplified\.isl"', "MessagesFile: `"$root\build\lang\ChineseSimplified.isl`""
+$iss | Set-Content $issBuild -Encoding UTF8 -NoNewline
 $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) { throw "Inno Setup 6 not found (winget install JRSoftware.InnoSetup --scope user)" }
 $tmpOut = Join-Path $env:LOCALAPPDATA "polyphony\installer-out"
 New-Item -ItemType Directory -Force $tmpOut | Out-Null
-& $iscc /Q "/O$tmpOut" "installer\polyphony.iss"
+& $iscc /Q "/O$tmpOut" $issBuild
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 New-Item -ItemType Directory -Force dist-installer | Out-Null
 Copy-Item "$tmpOut\*.exe" dist-installer -Force

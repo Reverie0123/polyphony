@@ -112,6 +112,6 @@ function classifyStderr(text: string): ProviderError["code"] {
 /** Flattens a chat transcript into one prompt body for CLIs that take a single prompt string. */
 export function transcriptPrompt(messages: ChatMessage[], selfName: string): string {
   const parts: string[] = [];
-  for (const m of messages) parts.push(m.role === "assistant" ? `[${selfName}]: ${m.content}` : m.content);
+  for (const m of messages) parts.push(m.role === "assistant" ? `[${selfName}]: ${m.content}` : m.role === "user" ? `[User]: ${m.content}` : m.content);
   return parts.join("\n\n");
 }

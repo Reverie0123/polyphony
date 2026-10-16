@@ -433,6 +433,15 @@ export class ChatView {
     }
     body.appendChild(sender);
 
+    // A regenerated reply folds away as "previous version".
+    if (m.supersededAt && !isUser) {
+      const d = document.createElement("details");
+      d.className = "folded";
+      d.innerHTML = `<summary>${escapeHtml(t("msg.superseded"))}</summary><div class="bubble">${renderMarkdown(m.text)}</div>`;
+      body.appendChild(d);
+      wrap.appendChild(body);
+      return wrap;
+    }
     // A user message superseded by an edit folds away.
     const supersededBy = isUser && m.excludedFromContext ? this.session.messages.find((x) => x.editedFrom === m.id) : null;
     if (supersededBy) {
@@ -527,7 +536,7 @@ export class ChatView {
     btn("↩", t("action.reply"), () => this.setReply(m));
     btn("⎘", t("action.copy"), async () => { try { await navigator.clipboard.writeText(m.text); this.ctx.toast(t("toast.copied")); } catch { /* ignore */ } });
     if (m.sender === "user") btn("✎", t("action.edit"), () => this.setEditing(m));
-    else btn("↻", t("action.regenerate"), () => post(url("/regenerate")).catch((e) => this.ctx.toast(e.message, true)));
+    else if (m.kind !== "steps") btn("↻", t("action.regenerate"), () => post(url("/regenerate")).catch((e) => this.ctx.toast(e.message, true))); // a DeskDock task is re-run by mentioning it again
     btn(m.starred ? "★" : "☆", m.starred ? t("action.unstar") : t("action.star"), () => patch(url(""), { starred: !m.starred }));
     btn(m.pinned ? "📍" : "📌", m.pinned ? t("action.unpin") : t("action.pin"), () => patch(url(""), { pinned: !m.pinned }));
     btn("➦", t("action.forward"), () => this.forwardDialog(m));

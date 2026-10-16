@@ -24,13 +24,18 @@ export function now(): string {
   return new Date().toISOString();
 }
 
+/** Files that could not be parsed at startup (kept aside as *.corrupt-<time>); shown to the user on the first page load. */
+export const corruptFiles: string[] = [];
+
 function readJson<T>(file: string, fallback: T): T {
   try {
     if (!existsSync(file)) return fallback;
     return JSON.parse(readFileSync(file, "utf8")) as T;
   } catch {
-    // A corrupt file is kept aside for the user instead of being overwritten silently.
+    // A corrupt file is kept aside for the user instead of being overwritten silently, and reported.
     try { renameSync(file, file + ".corrupt-" + Date.now()); } catch { /* ignore */ }
+    corruptFiles.push(path.basename(file));
+    console.error(`[polyphony] ${path.basename(file)} could not be parsed; moved aside as ${path.basename(file)}.corrupt-*`);
     return fallback;
   }
 }
@@ -39,13 +44,23 @@ export function writeJsonAtomic(file: string, value: unknown): void {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = file + ".tmp";
   writeFileSync(tmp, JSON.stringify(value, null, 1), "utf8");
-  renameSync(tmp, file);
+  // On Windows a scanner or editor holding the target makes rename fail with EPERM/EBUSY for a moment; retry briefly.
+  for (let attempt = 0; ; attempt++) {
+    try { renameSync(tmp, file); return; }
+    catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (attempt >= 3 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30 * (attempt + 1));
+    }
+  }
 }
 
 interface Collection<T> { schemaVersion: number; items: T[] }
 
 export class Store {
   readonly dir: string;
+  /** ids of sessions deleted in this process: a late saveSession from a loop that still holds the object must not resurrect the file */
+  private deleted = new Set<string>();
   private accounts: Account[];
   private contacts: Contact[];
   private keys: Record<string, string>;
@@ -79,7 +94,16 @@ export class Store {
     const allowed = Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[];
     const target = this.settings as unknown as Record<string, unknown>;
     const source = patch as unknown as Record<string, unknown>;
-    for (const k of allowed) if (k in source && k !== "schemaVersion" && source[k] !== undefined) target[k] = source[k];
+    const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+    for (const k of allowed) {
+      if (!(k in source) || k === "schemaVersion" || source[k] === undefined) continue;
+      const v = source[k];
+      const want = typeof defaults[k];
+      // a value of the wrong type (e.g. concurrency: "3") would silently break what reads it; ignore it
+      if (typeof v !== want) continue;
+      if (want === "number" && !Number.isFinite(v as number)) continue;
+      target[k] = v;
+    }
     this.settings.schemaVersion = SCHEMA_VERSION;
     writeJsonAtomic(this.file("settings.json"), this.settings);
     return this.getSettings();
@@ -218,7 +242,7 @@ export class Store {
   }
 
   getSession(id: string): Session | undefined {
-    if (!/^[A-Za-z0-9_-]+$/.test(id)) return undefined;
+    if (!/^[A-Za-z0-9_-]+$/.test(id) || this.deleted.has(id)) return undefined;
     const cached = this.sessionCache.get(id);
     if (cached) return cached;
     const file = path.join(this.dir, "sessions", id + ".json");
@@ -250,6 +274,7 @@ export class Store {
       speakingOrder: input.speakingOrder ?? "list",
       roundGapSec: input.roundGapSec ?? 5,
       canEndDiscussion: input.canEndDiscussion ?? [],
+      templateId: input.templateId,
       nextSeq: 1,
       messages: [],
     };
@@ -258,7 +283,10 @@ export class Store {
     return s;
   }
 
+  get corruptFiles(): string[] { return [...corruptFiles]; }
+
   saveSession(s: Session): void {
+    if (this.deleted.has(s.id)) return;
     s.updatedAt = now();
     writeJsonAtomic(path.join(this.dir, "sessions", s.id + ".json"), s);
   }
@@ -266,6 +294,7 @@ export class Store {
   deleteSession(id: string): boolean {
     const s = this.getSession(id);
     if (!s) return false;
+    this.deleted.add(id); // after the read: getSession hides deleted ids, so the order matters
     this.sessionCache.delete(id);
     try { unlinkSync(path.join(this.dir, "sessions", id + ".json")); } catch { return false; }
     return true;

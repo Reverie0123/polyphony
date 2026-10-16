@@ -29,8 +29,9 @@ const ctx = {
     ctx.contacts = b.contacts;
     ctx.sessions = b.sessions;
     ctx.version = b.version;
-    ctx.lan = { addresses: b.lanAddresses, token: b.lanToken };
+    ctx.lan = { addresses: b.lanAddresses, token: b.lanToken, active: !!b.lanActive };
     ctx.update = b.update;
+    if (!ctx.warnedCorrupt && Array.isArray(b.warnings)) { for (const w of b.warnings) if (w.code === "corrupt_file") ctx.toast(t("warn.corruptFile", { file: w.file }), true); ctx.warnedCorrupt = true; }
     applyTheme();
     renderSessionList();
     document.getElementById("sidebar-foot").innerHTML = `<span>Polyphony ${escapeHtml(b.version)}</span>`;
@@ -113,7 +114,7 @@ function openSettings() {
   const lanUrls = s.lanAccess && ctx.lan?.addresses?.length ? ctx.lan.addresses.map((a) => `http://${a}:${s.port}/?token=${encodeURIComponent(ctx.lan.token ?? "")}`) : [];
   const lanInfo = lanUrls.length
     ? `<div class="hint">${escapeHtml(t("settings.lanUrl"))}<br>${lanUrls.map(escapeHtml).join("<br>")}</div><div class="hint">${escapeHtml(t("lan.qr"))}</div><div class="row" id="s-lan-qr" style="gap:16px;flex-wrap:wrap;margin:6px 0 10px"></div>`
-    : "";
+    : (s.lanAccess && !ctx.lan?.active ? `<div class="hint">${escapeHtml(t("lan.restartHint"))}</div>` : "");
   const html = `
     <div class="row">
       ${f(t("settings.lang"), sel("s-lang", s.lang, [["auto", t("settings.lang.auto")], ["zh", "中文"], ["en", "English"]]))}

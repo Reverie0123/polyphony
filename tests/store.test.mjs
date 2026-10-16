@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+const readdirSyncList = (d) => readdirSync(d);
 import path from "node:path";
 import { Store } from "../dist/store.js";
 import { tempDir } from "./helpers.mjs";
@@ -74,3 +75,31 @@ test("ledger appends lines and reads them back", () => {
     cleanup();
   }
 });
+
+test("settings PATCH ignores values of the wrong type and non-finite numbers", () => {
+  const { dir, cleanup } = tempDir();
+  try {
+    const store = new Store(dir);
+    const before = store.getSettings();
+    const after = store.updateSettings({ concurrency: "3", autoExitMinutes: NaN, lanAccess: "yes", port: 7400 });
+    assert.equal(after.concurrency, before.concurrency, "string for a number is ignored");
+    assert.equal(after.autoExitMinutes, before.autoExitMinutes, "NaN is ignored");
+    assert.equal(after.lanAccess, before.lanAccess, "string for a boolean is ignored");
+    assert.equal(after.port, 7400, "a valid value is applied");
+  } finally {
+    cleanup();
+  }
+});
+
+test("a corrupt data file is reported, kept aside and started empty", () => {
+  const { dir, cleanup } = tempDir();
+  try {
+    writeFileSync(path.join(dir, "keys.json"), "{ not json");
+    const store = new Store(dir);
+    assert.ok(store.corruptFiles.includes("keys.json"));
+    assert.ok(existsSync(dir) && require_fs_list(dir).some((f) => f.startsWith("keys.json.corrupt-")), "original kept aside");
+  } finally {
+    cleanup();
+  }
+});
+function require_fs_list(d) { return readdirSyncList(d); }

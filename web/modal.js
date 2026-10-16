@@ -7,7 +7,8 @@ export function openModal(ctx, { title, bodyHtml, wide, buttons, onOpen }) {
   modal.className = "modal" + (wide ? " wide" : "");
   modal.innerHTML = `<div class="modal-head"><span>${escapeHtml(title)}</span><button class="icon-btn" data-close>✕</button></div><div class="modal-body">${bodyHtml}</div><div class="modal-foot"></div>`;
   const foot = modal.querySelector(".modal-foot");
-  const close = () => { modal.remove(); };
+  let cleanup = () => {};
+  const close = () => { cleanup(); modal.remove(); };
   for (const b of buttons ?? []) {
     const el = document.createElement("button");
     el.className = "btn " + (b.primary ? "primary" : b.danger ? "danger" : "");
@@ -19,6 +20,11 @@ export function openModal(ctx, { title, bodyHtml, wide, buttons, onOpen }) {
     foot.appendChild(el);
   }
   modal.querySelector("[data-close]").addEventListener("click", close);
+  const onKey = (e) => { if (e.key === "Escape" && root.lastElementChild === modal) { close(); } };
+  document.addEventListener("keydown", onKey);
+  const onOverlay = (e) => { if (e.target === root && root.lastElementChild === modal) close(); };
+  root.addEventListener("click", onOverlay);
+  cleanup = () => { document.removeEventListener("keydown", onKey); root.removeEventListener("click", onOverlay); };
   root.appendChild(modal);
   onOpen?.(modal, close);
   return { modal, close };

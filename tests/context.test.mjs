@@ -105,3 +105,17 @@ test("cleanReply strips the self prefix and cuts impersonation", () => {
   assert.equal(r.truncatedImpersonation, true);
   assert.equal(cleanReply("正常回复", "甲", ["乙"]).truncatedImpersonation, false);
 });
+
+test("a DeskDock steps message enters history through its text summary; notices never do", () => {
+  seq = 1;
+  const s = session("group", [
+    msg("user", "@DeskDock 打开记事本"),
+    msg("deskdock", "已经打开记事本并输入了内容。", { kind: "steps", steps: [{ id: "c1", tool: "click", argsSummary: "{}", resultSummary: "ok", ok: true, startedAt: "x" }] }),
+    msg("system", "讨论结束", { kind: "notice" }),
+    msg("user", "然后呢"),
+  ]);
+  const built = buildContext(s, contacts[0], s.members[0], contacts, { lang: "zh" });
+  const joined = built.messages.map((m) => m.content).join("\n");
+  assert.ok(joined.includes("已经打开记事本"), "the summary text is visible to other members");
+  assert.ok(!joined.includes("讨论结束"), "notices stay out");
+});

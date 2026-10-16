@@ -99,8 +99,12 @@ export const chatOpenAI: ChatFn = async function* (ctx, req) {
     stream: true,
     stream_options: { include_usage: true },
   };
-  if (req.temperature !== undefined) body.temperature = req.temperature;
-  if (req.maxTokens) body.max_tokens = req.maxTokens;
+  // OpenAI's own newer models (gpt-5*, o*) take max_completion_tokens and reject temperature values other than 1.
+  let official = false;
+  try { official = /(^|\.)api\.openai\.com$/i.test(new URL(base).hostname); } catch { /* keep false */ }
+  const newGen = official && /^(gpt-5|o\d)/i.test(req.model);
+  if (req.temperature !== undefined && !(newGen && req.temperature !== 1)) body.temperature = req.temperature;
+  if (req.maxTokens) { if (official) body.max_completion_tokens = req.maxTokens; else body.max_tokens = req.maxTokens; }
   if (req.tools?.length) {
     body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
   }

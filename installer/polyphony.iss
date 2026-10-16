@@ -55,7 +55,8 @@ Name: "{autodesktop}\Polyphony 复调"; Filename: "{sys}\wscript.exe"; Parameter
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; Description: "{cm:RunApp}"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
-Filename: "taskkill"; Parameters: "/F /FI ""WINDOWTITLE eq Polyphony*"""; Flags: runhidden; RunOnceId: "killapp"
+; The server runs as a hidden node.exe without a window, so it is stopped through its own instance.json / pid.
+Filename: "{app}\polyphony.cmd"; Parameters: "--stop"; Flags: runhidden waituntilterminated; RunOnceId: "stopapp"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\node_modules"

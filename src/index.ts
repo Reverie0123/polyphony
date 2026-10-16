@@ -65,6 +65,25 @@ async function alreadyRunning(dir: string): Promise<{ port: number; url: string 
   }
 }
 
+/** Stops the instance recorded in instance.json (used by --stop and by the uninstaller). */
+export async function stopRunning(dir: string): Promise<boolean> {
+  const file = path.join(dir, "instance.json");
+  if (!existsSync(file)) return false;
+  let inst: { port: number; pid: number };
+  try { inst = JSON.parse(readFileSync(file, "utf8")) as { port: number; pid: number }; } catch { return false; }
+  const alive = await alreadyRunning(dir);
+  if (!alive) return false;
+  try {
+    if (process.platform === "win32") spawn("taskkill", ["/pid", String(inst.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+    else process.kill(inst.pid, "SIGTERM");
+  } catch { return false; }
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 150));
+    if (!(await alreadyRunning(dir))) return true;
+  }
+  return false;
+}
+
 function findEdge(): string | undefined {
   const candidates = [
     path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft", "Edge", "Application", "msedge.exe"),
@@ -116,7 +135,25 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const version = readVersion();
   if (argv.includes("--version")) { console.log(version); return; }
   if (argv.includes("--help")) {
-    console.log(`Polyphony ${version}\n  polyphony            start and open the window\n  --no-open            start without opening a window\n  --port <n>           port (default from settings, 7331)\n  --data-dir <path>    data directory (default %APPDATA%\\Polyphony or POLYPHONY_HOME)\n  --reset-token        issue a new token`);
+    console.log([
+      `Polyphony ${version}`,
+      "  polyphony            start and open the window (or just open it if already running)",
+      "  --no-open            start without opening a window",
+      "  --port <n>           port (default from settings, 7331; the next 9 are tried if busy)",
+      "  --data-dir <path>    data directory (default %APPDATA%\\Polyphony or POLYPHONY_HOME)",
+      "  --reset-token        issue a new token",
+      "  --stop               stop the running instance",
+      "  --force              start even if another instance seems to be running",
+      "  --no-exit            never exit automatically when no page is connected",
+      "  --no-update-check    skip the update check at startup",
+    ].join("\n"));
+    return;
+  }
+  process.title = "Polyphony";
+
+  if (argv.includes("--stop")) {
+    const stopped = await stopRunning(dir);
+    console.log(stopped ? "Polyphony stopped" : "Polyphony is not running");
     return;
   }
 
@@ -162,7 +199,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     return fresh.token;
   };
   const { server, hub } = createApp({
-    store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, updater, restart, resetToken, token: tokens.token, lanToken, version,
+    store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, updater, restart, resetToken, token: tokens.token, lanToken, version, lang,
+    lanActive: !!settings.lanAccess, // the bind address below is decided from the same startup snapshot
     onClients: (n) => { clients = n; if (n === 0) idleSince = Date.now(); },
   });
 

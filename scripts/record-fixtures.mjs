@@ -13,6 +13,21 @@ const contacts = JSON.parse(readFileSync(path.join(dataDir, "contacts.json"), "u
 const outDir = path.resolve("tests/fixtures");
 mkdirSync(outDir, { recursive: true });
 
+// Local CLIs: their JSON formats change with every release, so their raw stdout is worth keeping too.
+import { spawnSync } from "node:child_process";
+for (const kind of ["claude", "codex"]) {
+  if (!accounts.some((a) => a.provider === "cli" && a.cliKind === kind)) continue;
+  const file = path.join(outDir, `cli-${kind}.txt`);
+  if (existsSync(file)) { console.log("skip (exists)", path.basename(file)); continue; }
+  const args = kind === "claude"
+    ? ["-p", "--bare", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence", "--tools", "", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+    : ["exec", "--json", "-s", "read-only", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--color", "never", "-"];
+  const exe = kind === "codex" && process.platform === "win32" ? "codex.cmd" : kind;
+  const r = spawnSync(exe, args, { input: "用五个字以内打个招呼。", encoding: "utf8", shell: exe.endsWith(".cmd"), timeout: 120000, cwd: path.join(dataDir, "cli-cwd") });
+  writeFileSync(file, `# ${kind} exit ${r.status}\n` + (r.stdout ?? "") + (r.stderr ? "\n# stderr\n" + r.stderr : ""), "utf8");
+  console.log("recorded", path.basename(file), "exit", r.status, (r.stdout ?? "").length, "bytes");
+}
+
 for (const c of contacts) {
   const a = accounts.find((x) => x.id === c.accountId);
   if (!a || a.provider === "cli" || !c.model) continue;

@@ -122,6 +122,8 @@ export interface Session {
   speakingOrder: SpeakingOrder;
   roundGapSec: number;
   canEndDiscussion: string[];
+  /** Role-card template the group was built from, if any (the discussion dialog enforces its minimum rounds). */
+  templateId?: string;
   nextSeq: number;
   messages: Message[];
 }
@@ -191,6 +193,8 @@ export interface Message {
   privateTo?: string[];
   excludedFromContext: boolean;
   versions?: MessageVersion[];
+  /** set when the message was regenerated in place */
+  regeneratedAt?: string;
   editedFrom?: string;
   forwardedFrom?: { sessionId: string; messageId: string };
   starred: boolean;

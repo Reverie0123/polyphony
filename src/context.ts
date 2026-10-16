@@ -130,14 +130,14 @@ export function buildContext(session: Session, self: Contact, member: Member | u
     const r = opts.lang === "zh"
       ? [
         `现在是自由讨论，议题：${d.question}`,
-        `共 ${d.rounds} 轮，当前第 ${d.round} 轮。每轮每人发言一次。`,
+        `共 ${d.rounds} 轮。每轮每人发言一次。`,
         "规则：不要复述别人已经说过的内容；不要以「我同意」「很好的观点」之类的客套开头；每轮至少提出一个具体的修改、反对或新论据；直接说结论和理由。",
         `如果你对当前结论没有任何新意见，只回复 ${NO_OBJECTION.zh} 这四个字，不要写别的。`,
         d.canEnd ? `如果讨论目标已经达成，你可以在回复末尾单独一行写 ${END_DISCUSSION.zh} 来结束讨论。` : "",
       ]
       : [
         `This is a free discussion. Topic: ${d.question}`,
-        `${d.rounds} rounds in total, now round ${d.round}. Everyone speaks once per round.`,
+        `${d.rounds} rounds in total. Everyone speaks once per round.`,
         "Rules: do not repeat what others already said; never open with agreement or compliments; each round bring at least one concrete change, objection or new argument; state conclusions and reasons directly.",
         `If you have nothing new to add, reply with exactly ${NO_OBJECTION.en} and nothing else.`,
         d.canEnd ? `If the goal is reached you may end the discussion by writing ${END_DISCUSSION.en} alone on the last line.` : "",
@@ -198,7 +198,7 @@ export function buildContext(session: Session, self: Contact, member: Member | u
 }
 
 function includeInHistory(m: Message, selfId: string): boolean {
-  if (m.kind === "notice" || m.kind === "steps") return false;
+  if (m.kind === "notice") return false; // a "steps" message carries DeskDock's final summary in text; the steps array is not in text
   if (m.status !== "done") return false;
   if (m.excludedFromContext) return false;
   if (m.privateTo && !m.privateTo.includes(selfId) && m.sender !== selfId) return false;

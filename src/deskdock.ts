@@ -47,6 +47,7 @@ const T = {
     driverNoTools: "驱动模型不支持工具调用，换一个。",
     notInstalled: "没找到 deskdock 命令：在设置里安装 DeskDock 或填它的路径。",
     screenshotOmitted: "[截图已省略：驱动模型不支持看图]",
+    screenshotDropped: "[更早的截图已省略，只保留最新一张]",
     screenshot: "[截图]",
     tooManySteps: "已到 30 步上限，停止。",
     done: "（已完成，没有说明）",
@@ -63,6 +64,7 @@ const T = {
     driverNoTools: "The driver model does not support tool calling; choose another.",
     notInstalled: "deskdock command not found: install DeskDock in Settings or set its path.",
     screenshotOmitted: "[screenshot omitted: the driver model cannot see images]",
+    screenshotDropped: "[older screenshot omitted; only the newest one is kept]",
     screenshot: "[screenshot]",
     tooManySteps: "Reached the 30-step limit, stopping.",
     done: "(done, no summary)",
@@ -74,6 +76,7 @@ export class DeskDock {
   private starting: Promise<McpClient> | null = null;
   private active = new Map<string, AbortController>();
   private lastError = "";
+  private lastLog = "";
 
   constructor(private deps: DeskDockDeps) {}
 
@@ -127,7 +130,7 @@ export class DeskDock {
       command: cmd.command, args: cmd.args, env, cwd: this.deps.store.file("cli-cwd"),
       clientName: "polyphony", requestTimeoutMs: 180000,
       onExit: () => { if (this.client === client) this.client = null; },
-      onLog: (line) => { this.lastError = line.slice(0, 300); },
+      onLog: (line) => { this.lastLog = line.slice(0, 300); if (/\b(error|fail|exception|refused)\b/i.test(line)) this.lastError = line.slice(0, 300); }, // ordinary stderr log lines are not errors
     });
     this.starting = client.start().then(() => { this.client = client; this.lastError = ""; return client; }).finally(() => { this.starting = null; });
     try {
@@ -221,7 +224,7 @@ export class DeskDock {
         for await (const ev of chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, {
           model: driver.model, system, messages: [...built.messages, ...loop], tools, temperature: driver.temperature, maxTokens: driver.maxTokens, signal: controller.signal, cacheSystem: true,
         })) {
-          if (ev.type === "delta") { text += ev.text; msg.text = (msg.text ? msg.text + (msg.text.endsWith("\n") ? "" : "") : "") ; }
+          if (ev.type === "delta") text += ev.text;
           else if (ev.type === "tool_call") calls.push({ id: ev.id || newId("call_"), name: ev.name, args: ev.args });
           else if (ev.type === "usage") usage = ev.usage;
           else if (ev.type === "status" && ev.text === "usage-missing") usageMissing = true;
@@ -262,6 +265,12 @@ export class DeskDock {
           flushSteps();
           const content = resultText.slice(0, 12000) + (images.length && !driver.supportsVision ? `\n${t.screenshotOmitted}` : "");
           loop.push({ role: "tool", toolCallId: call.id, content: content || "(empty)", images: driver.supportsVision ? images : undefined });
+          // every step re-sends the whole loop to the driver: keep only the newest screenshot, note the rest
+          let kept = 0;
+          for (let i = loop.length - 1; i >= 0; i--) {
+            const lm = loop[i];
+            if (lm.role === "tool" && lm.images?.length) { kept++; if (kept > 1) { lm.images = undefined; lm.content = `${lm.content}\n${t.screenshotDropped}`; } }
+          }
         }
         if (iteration === MAX_STEPS - 1) msg.text = (msg.text ? msg.text + "\n\n" : "") + t.tooManySteps;
       }
