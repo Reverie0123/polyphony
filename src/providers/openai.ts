@@ -104,31 +104,77 @@ export const chatOpenAI: ChatFn = async function* (ctx, req) {
   if (req.tools?.length) {
     body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
   }
-  const res = await fetchWithTimeout(
+  const send = (b: Record<string, unknown>) => fetchWithTimeout(
     `${base}/chat/completions`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ctx.key}` },
-      body: JSON.stringify(body),
+      body: JSON.stringify(b),
     },
     req.signal,
     req.firstByteTimeoutMs ?? 60000,
   );
+  let res = await send(body);
+  if (res.status === 400) {
+    // Some relays reject stream_options; retry once without it before giving up.
+    const detail = await res.text().catch(() => "");
+    const { stream_options: _dropped, ...withoutUsage } = body;
+    res = await send(withoutUsage);
+    if (!res.ok) throw httpError(res.status, (await res.text().catch(() => "")) || detail);
+  }
   if (!res.ok) throw httpError(res.status, await res.text().catch(() => ""));
+
+  // A relay may answer a stream request with plain JSON: a non-streaming completion, or an error behind HTTP 200.
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    const text = await res.text();
+    yield* fromJsonBody(text);
+    return;
+  }
   const toolBuf = new Map<number, { id: string; name: string; args: string }>();
   let finished = false;
   let sawUsage = false;
+  let sawData = false;
+  let yielded = false;
+  const stray: string[] = [];
   for await (const line of readLines(res.body, req.signal)) {
-    if (!line.startsWith("data:")) continue;
+    if (!line.startsWith("data:")) { if (!line.startsWith(":")) stray.push(line); continue; }
+    sawData = true;
     const payload = line.slice(5).trim();
     if (payload === "[DONE]") break;
     for (const ev of parseOpenAIChunk(payload, toolBuf)) {
       if (ev.type === "done") { finished = true; continue; }
       if (ev.type === "usage") sawUsage = true;
+      yielded = true;
       yield ev;
     }
+  }
+  if (!sawData || (!yielded && !toolBuf.size)) {
+    // Nothing usable arrived: whatever the relay sent instead is the real story (often an error object without "data:").
+    const raw = stray.join("\n").trim();
+    if (raw) { yield* fromJsonBody(raw); return; }
+    if (!sawData) throw new ProviderError("the server sent no stream", "server");
   }
   for (const [, tc] of [...toolBuf.entries()].sort((a, b) => a[0] - b[0])) yield { type: "tool_call", id: tc.id, name: tc.name, args: tc.args };
   if (!sawUsage) yield { type: "status", text: "usage-missing" };
   yield { type: "done", finish: finished ? "stop" : undefined };
 };
+
+/** Handles a plain JSON body: a completion (yielded as one delta) or an error (thrown with its message). */
+function* fromJsonBody(text: string): Generator<ChatEvent> {
+  let j: { error?: unknown; message?: string; choices?: { message?: { content?: string }; finish_reason?: string }[]; usage?: OpenAIUsage; model?: string };
+  try { j = JSON.parse(text); } catch { throw new ProviderError(`unexpected reply: ${text.slice(0, 200)}`, "server"); }
+  if (j.error !== undefined) {
+    const msg = typeof j.error === "string" ? j.error : (j.error as { message?: string })?.message ?? JSON.stringify(j.error);
+    throw new ProviderError(msg, /auth|key|unauthori|invalid api/i.test(msg) ? "auth" : /balance|余额|insufficient|quota|欠费/i.test(msg) ? "rate_limit" : "server");
+  }
+  const content = j.choices?.[0]?.message?.content;
+  if (typeof content === "string") {
+    if (content) yield { type: "delta", text: content };
+    const u = usageFromOpenAI(j.usage);
+    if (u) yield { type: "usage", usage: u }; else yield { type: "status", text: "usage-missing" };
+    yield { type: "done", finish: j.choices?.[0]?.finish_reason ?? "stop", model: j.model };
+    return;
+  }
+  throw new ProviderError(`unexpected reply: ${(j.message ?? text).slice(0, 200)}`, "server");
+}

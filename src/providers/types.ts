@@ -68,11 +68,21 @@ export type ChatFn = (ctx: ProviderContext, req: ChatRequest) => AsyncGenerator<
 export class ProviderError extends Error {
   constructor(
     message: string,
-    readonly code: "auth" | "rate_limit" | "server" | "network" | "timeout" | "refused" | "bad_request" | "cancelled" | "not_found" | "unknown",
+    readonly code: "auth" | "rate_limit" | "server" | "network" | "timeout" | "refused" | "bad_request" | "cancelled" | "not_found" | "empty_reply" | "unknown",
     readonly status?: number,
   ) {
     super(message);
   }
+}
+
+/** Turns any error raised while reading a body into a ProviderError with the right code. */
+export function streamError(err: unknown, signal?: AbortSignal): ProviderError {
+  if (err instanceof ProviderError) return err;
+  if (signal?.aborted) return new ProviderError("cancelled", "cancelled");
+  const e = err as { name?: string; message?: string };
+  if (e?.name === "TimeoutError") return new ProviderError("the stream stalled", "timeout");
+  if (e?.name === "AbortError") return new ProviderError("the stream was cut off", "network");
+  return new ProviderError(e?.message || "network error while reading the reply", "network");
 }
 
 /** Reads an SSE / NDJSON body line by line; yields each non-empty line without the trailing newline. */
@@ -84,7 +94,9 @@ export async function* readLines(body: ReadableStream<Uint8Array> | null, signal
   try {
     while (true) {
       if (signal?.aborted) throw new ProviderError("cancelled", "cancelled");
-      const { value, done } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try { chunk = await reader.read(); } catch (err) { throw streamError(err, signal); }
+      const { value, done } = chunk;
       if (done) break;
       buf += decoder.decode(value, { stream: true });
       let idx: number;
@@ -111,15 +123,27 @@ export function httpError(status: number, detail: string): ProviderError {
   return new ProviderError(short || `HTTP ${status}`, "bad_request", status);
 }
 
-/** fetch with a first-byte timeout and the caller's abort signal; network failures become ProviderError. */
+/**
+ * fetch with a first-byte timeout and the caller's abort signal; network failures become ProviderError.
+ * The timeout only covers the wait for the response headers. Once they arrive it is cleared, so a long reply
+ * (a reasoning model thinking for minutes) is never cut off; only the caller's signal can abort the body.
+ */
 export async function fetchWithTimeout(url: string, init: RequestInit, signal: AbortSignal | undefined, firstByteMs: number): Promise<Response> {
-  const timeout = AbortSignal.timeout(firstByteMs);
-  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  if (signal?.aborted) throw new ProviderError("cancelled", "cancelled");
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, firstByteMs);
   try {
-    return await fetch(url, { ...init, signal: combined });
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
   } catch (err) {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
     if (signal?.aborted) throw new ProviderError("cancelled", "cancelled");
-    if (timeout.aborted) throw new ProviderError(`no response within ${Math.round(firstByteMs / 1000)}s`, "timeout");
+    if (timedOut) throw new ProviderError(`no response within ${Math.round(firstByteMs / 1000)}s`, "timeout");
     throw new ProviderError((err as Error).message || "network error", "network");
   }
 }

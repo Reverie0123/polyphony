@@ -17,6 +17,8 @@ export function formatCost(cost, settings) {
 }
 
 export function costClass(cost, settings) {
+  // unpriced-alert: a metered call with no price is shown in red so it is never mistaken for free.
+  if (cost && cost.kind === "metered" && !cost.priced) return "alert";
   if (!cost || !cost.priced || cost.kind !== "metered") return "";
   if (cost.cny >= settings.costAlert) return "alert";
   if (cost.cny >= settings.costWarn) return "warn";

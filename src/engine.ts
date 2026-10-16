@@ -217,10 +217,12 @@ export class Engine {
       const cleaned = cleanReply(msg.text, contact.nickname, contacts.filter((c) => c.id !== contact.id).map((c) => c.nickname));
       msg.text = cleaned.text;
       if (cleaned.truncatedImpersonation) msg.error = { code: "impersonation_cut", message: "reply cut where the model started speaking as another member" };
+      // An empty reply is a failure, not a free success: the provider said nothing usable.
+      if (!msg.text.trim() && !(msg.reasoning ?? "").trim()) throw new ProviderError("the model returned an empty reply", "empty_reply");
       msg.status = "done";
     } catch (err) {
       flush(true);
-      const e = err instanceof ProviderError ? err : new ProviderError((err as Error).message ?? String(err), "unknown");
+      const e = classifyError(err, controller.signal);
       if (e.code === "cancelled" || controller.signal.aborted) {
         msg.status = "cancelled";
         msg.error = { code: "cancelled", message: "cancelled" };
@@ -233,23 +235,28 @@ export class Engine {
     }
 
     // Usage: reported by the provider, or estimated from characters when it was not.
-    if (!usage || usageMissing || msg.status === "cancelled") {
-      const est: Usage = {
+    const reported = !!usage && !usageMissing;
+    const finalUsage: Usage = reported && msg.status !== "cancelled"
+      ? usage!
+      : {
         ...ZERO_USAGE,
         input: usage?.input ?? built.info.tokensEstimate,
         output: usage?.output ?? estimateTokens(msg.text + (msg.reasoning ?? "")),
         estimated: true,
       };
-      usage = usage && !usageMissing && msg.status !== "cancelled" ? usage : est;
-    }
-    msg.usage = usage;
+    // finalUsage is what gets charged and recorded below.
+    msg.usage = finalUsage;
     msg.latencyMs = Date.now() - started;
-    const cost: Cost = computeCost(account.provider, usage, pricing.lookup(account.provider, contact.model), settings.usdToCny);
+    // A failed call with no reported usage is not charged: we do not know what the provider billed, if anything.
+    const unknownCharge = msg.status === "error" && !reported;
+    const cost: Cost = unknownCharge
+      ? { usd: 0, cny: 0, priced: false, kind: account.provider === "cli" ? "subscription" : account.provider === "ollama" ? "free" : "metered" }
+      : computeCost(account.provider, finalUsage, pricing.lookup(account.provider, contact.model), settings.usdToCny);
     msg.cost = cost;
     if (finish === "max_tokens" || finish === "length") msg.error = msg.error ?? { code: "max_tokens", message: "reply hit the output limit" };
     session.spentTotal += cost.usd;
     store.saveSession(session);
-    if (usage.input + usage.output > 0) {
+    if (!unknownCharge && finalUsage.input + finalUsage.output > 0) {
       store.appendLedger({
         at: new Date().toISOString(),
         sessionId: session.id,
@@ -258,7 +265,7 @@ export class Engine {
         accountId: account.id,
         provider: account.provider,
         model: msg.model ?? contact.model,
-        usage,
+        usage: finalUsage,
         cost,
         purpose,
       });
@@ -287,6 +294,17 @@ export class Engine {
   textOf(m: Message): string {
     return messageText(m, this.deps.lang());
   }
+}
+
+/** Maps whatever a provider threw to a ProviderError; abort-flavoured DOMExceptions are not "unknown". */
+export function classifyError(err: unknown, signal?: AbortSignal): ProviderError {
+  if (err instanceof ProviderError) return err;
+  if (signal?.aborted) return new ProviderError("cancelled", "cancelled");
+  const e = err as { name?: string; message?: string; code?: string };
+  if (e?.name === "TimeoutError") return new ProviderError("the request timed out", "timeout");
+  if (e?.name === "AbortError") return new ProviderError("the connection was cut off", "network");
+  if (typeof e?.code === "string" && /^(ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|UND_ERR)/.test(e.code)) return new ProviderError(e.message ?? e.code, "network");
+  return new ProviderError(e?.message ?? String(err), "unknown");
 }
 
 function draftMessage(text: string, seq: number): Message {

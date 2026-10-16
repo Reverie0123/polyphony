@@ -560,7 +560,10 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
       let sessionUsd = 0;
       let todayUsd = 0;
       let allUsd = 0;
+      let unpricedCalls = 0;
+      let sessionUnpriced = 0;
       for (const e of entries) {
+        if (e.cost.kind === "metered" && !e.cost.priced) { unpricedCalls++; if (e.sessionId === sessionId) sessionUnpriced++; }
         allUsd += e.cost.usd;
         if (e.sessionId === sessionId) sessionUsd += e.cost.usd;
         if (isToday(e.at)) todayUsd += e.cost.usd;
@@ -569,7 +572,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         byProvider[k].usd += e.cost.usd;
         byProvider[k].calls++;
       }
-      return json(res, 200, { sessionUsd, todayUsd, allUsd, byProvider });
+      return json(res, 200, { sessionUsd, todayUsd, allUsd, byProvider, unpricedCalls, sessionUnpriced });
     }
 
     // ----- pricing -----

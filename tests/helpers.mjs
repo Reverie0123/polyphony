@@ -23,13 +23,15 @@ export function tempDir() {
 export function fakeProvider(script) {
   return async function* (ctx, req) {
     const plan = typeof script === "function" ? script(ctx, req) : script;
-    if (plan.error) throw plan.error;
+    if (plan.error && !plan.pieces?.length) throw plan.error;
     for (const piece of plan.pieces ?? ["Hello ", "world"]) {
       if (plan.delayMs) await new Promise((r) => setTimeout(r, plan.delayMs));
       if (req.signal?.aborted) { const { ProviderError } = await import("../dist/providers/types.js"); throw new ProviderError("cancelled", "cancelled"); }
       yield { type: "delta", text: piece };
     }
     for (const call of plan.toolCalls ?? []) yield { type: "tool_call", id: call.id, name: call.name, args: JSON.stringify(call.args ?? {}) };
+    // An error after some text simulates a stream cut off mid-reply.
+    if (plan.error) throw plan.error;
     if (plan.usage !== null) yield { type: "usage", usage: plan.usage ?? { input: 100, output: 20, cacheRead: 50, cacheWrite: 0, reasoning: 0, estimated: false } };
     yield { type: "done", finish: "stop", model: plan.model ?? req.model };
   };

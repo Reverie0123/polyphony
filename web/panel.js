@@ -122,6 +122,7 @@ export class Panel {
       [t("cost.all"), fmt(data.allUsd)],
     ];
     let html = rows.map(([k, v]) => `<div class="stat"><span>${escapeHtml(k)}</span><span class="v">${escapeHtml(v)}</span></div>`).join("");
+    if (data.unpricedCalls) html += `<div class="warn-text" style="margin:6px 0">${escapeHtml(t("cost.unpricedCalls", { n: data.unpricedCalls }))}</div>`;
     if (s.budget?.total) {
       const pct = Math.min(100, (s.spentTotal / s.budget.total) * 100);
       html += `<div class="section-title">${escapeHtml(t("cost.budget"))}</div><div class="stat"><span>${escapeHtml(t("cost.total"))}</span><span class="v">${escapeHtml(fmt(s.spentTotal))} / ${escapeHtml(fmt(s.budget.total))}</span></div><div class="bar"><div style="width:${pct}%"></div></div>`;

@@ -231,6 +231,8 @@ const zh = {
   "upd.failed": "更新失败，看日志",
   "upd.checking": "检查中…",
   "lan.qr": "手机扫码（同一 Wi-Fi）",
+  "err.empty_reply": "模型返回了空回复（服务商没给内容），没有计费。",
+  "cost.unpricedCalls": "{n} 次调用没有价目，未计入累计：去设置里给型号补价。",
   "confirm": "确定",
 };
 
@@ -466,6 +468,8 @@ const en = {
   "upd.failed": "Update failed, see the log",
   "upd.checking": "Checking…",
   "lan.qr": "Scan with a phone on the same Wi-Fi",
+  "err.empty_reply": "The model returned an empty reply (nothing usable from the provider); not charged.",
+  "cost.unpricedCalls": "{n} calls have no price and are missing from the totals: add the model to the price table in Settings.",
   "confirm": "OK",
 };
 

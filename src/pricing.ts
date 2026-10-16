@@ -24,7 +24,13 @@ export const BUILTIN_PRICES: Record<string, Price> = {
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-sonnet-4": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-opus-4-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  "claude-opus-4-1": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+  "claude-opus-4": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+  "claude-3-5-haiku": { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
   // DeepSeek (official, USD; cache hit is one tenth of a miss).
   "deepseek-chat": { input: 0.28, output: 0.42, cacheRead: 0.028, cacheWrite: 0.28 },
   "deepseek-reasoner": { input: 0.28, output: 0.42, cacheRead: 0.028, cacheWrite: 0.28 },
@@ -46,8 +52,10 @@ export function normalizeModel(model: string): string {
   const slash = m.lastIndexOf("/");
   if (slash >= 0) m = m.slice(slash + 1);
   m = m.replace(/@.*$/, "");
-  m = m.replace(/-20\d{6}$/, "");
+  m = m.replace(/-20\d{6}$/, "");            // claude-sonnet-4-5-20250929
+  m = m.replace(/-\d{4}-\d{2}-\d{2}$/, "");  // gpt-4o-2024-08-06
   m = m.replace(/-latest$/, "");
+  m = m.replace(/-(preview|beta)$/, "");
   return m;
 }
 
@@ -75,7 +83,15 @@ export class Pricing {
   lookup(provider: Provider, model: string): Price | undefined {
     if (provider === "ollama" || provider === "cli") return undefined;
     const n = normalizeModel(model);
-    return this.data.overrides[n] ?? this.data.online[n] ?? BUILTIN_PRICES[n];
+    const exact = this.data.overrides[n] ?? this.data.online[n] ?? BUILTIN_PRICES[n];
+    if (exact) return exact;
+    // "deepseek-chat-v3", "gpt-4o-mini-2024-07-18-ft" and similar: take the longest known name this one extends.
+    let best: string | undefined;
+    for (const table of [this.data.overrides, this.data.online, BUILTIN_PRICES]) {
+      for (const key of Object.keys(table)) if (n.startsWith(key + "-") && (!best || key.length > best.length)) best = key;
+      if (best) return table[best];
+    }
+    return undefined;
   }
 
   /** Every model this table knows, for the settings page. */
