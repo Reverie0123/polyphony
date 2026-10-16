@@ -31,6 +31,8 @@ export interface ServerOptions {
   updater?: Updater;
   /** Restarts the process (Setup / global installs after an update). */
   restart?: () => void;
+  /** Issues and persists a new local token; returns it. */
+  resetToken?: () => string;
   token: string;
   lanToken?: string;
   version: string;
@@ -114,10 +116,11 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
   const webDir = opts.webDir ?? defaultWebDir();
   const hub = new SseHub(opts.onClients);
 
+  let currentToken = opts.token;
   const tokenOk = (req: http.IncomingMessage, url: URL): boolean => {
     const given = (req.headers["x-polyphony-token"] as string | undefined) ?? url.searchParams.get("token") ?? "";
     if (!given) return false;
-    if (safeEqual(given, opts.token)) return true;
+    if (safeEqual(given, currentToken)) return true;
     return !!opts.lanToken && safeEqual(given, opts.lanToken);
   };
 
@@ -199,6 +202,12 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
       if (info.action !== "npm-global") return json(res, 200, { ok: false, action: info.action });
       const r = await opts.updater!.applyGlobal((line) => hub.broadcast("update.progress", { line }));
       return json(res, 200, { ok: r.ok, action: info.action, log: r.log });
+    }
+    if (p === "/api/token/reset" && method === "POST") {
+      if (!opts.resetToken) throw new HttpError(400, "token reset unavailable");
+      currentToken = opts.resetToken();
+      // The page that asked gets the new token; every other open page must be reopened from the shortcut.
+      return json(res, 200, { token: currentToken });
     }
     if (p === "/api/restart" && method === "POST") {
       if (!opts.restart) throw new HttpError(400, "restart unavailable");

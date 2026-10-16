@@ -233,6 +233,9 @@ const zh = {
   "lan.qr": "手机扫码（同一 Wi-Fi）",
   "err.empty_reply": "模型返回了空回复（服务商没给内容），没有计费。",
   "cost.unpricedCalls": "{n} 次调用没有价目，未计入累计：去设置里给型号补价。",
+  "token.reset": "重置令牌",
+  "token.hint": "令牌存在本机数据目录，书签里带的是它。重置后这个窗口继续可用，其他已打开的页面要从快捷方式重新打开。",
+  "token.done": "令牌已重置",
   "confirm": "确定",
 };
 
@@ -470,6 +473,9 @@ const en = {
   "lan.qr": "Scan with a phone on the same Wi-Fi",
   "err.empty_reply": "The model returned an empty reply (nothing usable from the provider); not charged.",
   "cost.unpricedCalls": "{n} calls have no price and are missing from the totals: add the model to the price table in Settings.",
+  "token.reset": "Reset token",
+  "token.hint": "The token lives in the local data folder and is what bookmarks carry. After a reset this window keeps working; other open pages must be reopened from the shortcut.",
+  "token.done": "Token reset",
   "confirm": "OK",
 };
 

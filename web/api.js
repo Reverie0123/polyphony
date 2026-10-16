@@ -23,6 +23,12 @@ export function getToken() {
   return token;
 }
 
+/** Replaces the token in memory and in this browser; used after a reset. */
+export function storeToken(t) {
+  token = t;
+  try { localStorage.setItem(TOKEN_KEY, t); } catch { /* private mode */ }
+}
+
 /** Uploads one File; resolves to the attachment record. */
 export async function uploadFile(file) {
   const data = await new Promise((resolve, reject) => {

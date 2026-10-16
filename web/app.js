@@ -1,6 +1,6 @@
 // App shell: bootstrap, session list, SSE wiring, settings modal.
 import { t, setLang, lang } from "./i18n.js";
-import { initToken, setToken, get, post, patch, put, connectEvents } from "./api.js";
+import { initToken, setToken, storeToken, get, post, patch, put, connectEvents } from "./api.js";
 import { escapeHtml } from "./markdown.js";
 import { ChatView, avatarEl, formatCost } from "./chat.js";
 import { Panel } from "./panel.js";
@@ -134,6 +134,7 @@ function openSettings() {
     <label class="check"><input type="checkbox" id="s-cli" ${s.cliEnabled ? "checked" : ""}> ${escapeHtml(t("settings.cliEnabled"))}</label>
     <label class="check"><input type="checkbox" id="s-lan" ${s.lanAccess ? "checked" : ""}> ${escapeHtml(t("settings.lan"))}</label>
     ${lanInfo}
+    <div class="row" style="align-items:center;margin:6px 0 10px"><button class="btn sm" id="s-token-reset" style="flex:0 0 auto">${escapeHtml(t("token.reset"))}</button><span class="hint">${escapeHtml(t("token.hint"))}</span></div>
     <div class="section-title">${escapeHtml(t("dd.title"))}</div>
     <div id="s-dd-status" class="hint"></div>
     ${f(t("dd.command"), `<input id="s-dd-cmd" value="${escapeHtml(s.deskdockCommand ?? "")}">`)}
@@ -212,6 +213,11 @@ function openSettings() {
         try { const r = await post("/api/update/apply"); updLog.textContent = r.log ?? ""; if (r.ok) { updStatus.textContent = t("upd.done"); updRestart.classList.remove("hidden"); } else ctx.toast(t("upd.failed"), true); } catch (err) { ctx.toast(err.message, true); } finally { updApply.disabled = false; }
       });
       updRestart.addEventListener("click", async () => { await post("/api/restart"); setTimeout(() => location.reload(), 2500); });
+      modal.querySelector("#s-token-reset").addEventListener("click", async (e) => {
+        if (!confirm(t("token.hint"))) return;
+        e.currentTarget.disabled = true;
+        try { const r = await post("/api/token/reset"); storeToken(r.token); ctx.toast(t("token.done")); } catch (err) { ctx.toast(err.message, true); } finally { e.currentTarget.disabled = false; }
+      });
       const ddStatus = modal.querySelector("#s-dd-status");
       const showDd = (st) => {
         const parts = [st.installed ? t("dd.status.installed", { cmd: st.command }) : t("dd.status.missing"), st.running ? t("dd.status.running", { n: st.toolCount }) : t("dd.status.idle")];

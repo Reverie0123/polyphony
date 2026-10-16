@@ -155,8 +155,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     child.unref();
     setTimeout(() => process.exit(0), 200);
   };
+  const resetToken = () => {
+    const fresh = loadOrCreateToken(dir, true);
+    if (tokens.lanToken) { fresh.lanToken = tokens.lanToken; writeJsonAtomic(path.join(dir, "token.json"), fresh); }
+    tokens.token = fresh.token;
+    return fresh.token;
+  };
   const { server, hub } = createApp({
-    store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, updater, restart, token: tokens.token, lanToken, version,
+    store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock, updater, restart, resetToken, token: tokens.token, lanToken, version,
     onClients: (n) => { clients = n; if (n === 0) idleSince = Date.now(); },
   });
 
