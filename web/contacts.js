@@ -283,7 +283,8 @@ export function openNewSession(ctx, onCreated) {
             const sameRole = ctx.contacts.find((c) => c.nickname === nickname && c.accountId === base.accountId && c.model === base.model);
             // The same role name on a different model gets the base contact's name appended, so a group can hold both.
             if (!sameRole && ctx.contacts.some((c) => c.nickname === nickname)) nickname = `${nickname}（${base.nickname}）`;
-            const existing = sameRole;
+            // The suffixed name may already exist from an earlier click; reuse it instead of adding another copy.
+            const existing = sameRole ?? ctx.contacts.find((c) => c.nickname === nickname && c.accountId === base.accountId && c.model === base.model);
             const c = existing ?? await post("/api/contacts", { accountId: base.accountId, model: base.model, nickname, avatar: nickname.slice(0, 1), persona: tp.roles[i], supportsTools: base.supportsTools, supportsVision: base.supportsVision, temperature: base.temperature ?? null, maxTokens: base.maxTokens ?? null });
             made.push(c);
           }

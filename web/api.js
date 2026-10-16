@@ -1,4 +1,6 @@
 // Thin client for the local server: token handling, JSON calls, and the SSE event stream.
+import { t } from "./i18n.js";
+
 const TOKEN_KEY = "polyphony.token";
 
 export function initToken() {
@@ -42,9 +44,12 @@ export async function uploadFile(file) {
 
 export class ApiError extends Error {
   constructor(status, body) {
-    super(body?.error || `HTTP ${status}`);
+    const code = body?.code || "error";
+    const translated = t("err." + code);
+    super(translated !== "err." + code ? translated : (body?.error || `HTTP ${status}`));
     this.status = status;
-    this.code = body?.code || "error";
+    this.code = code;
+    this.detail = body?.error || "";
   }
 }
 

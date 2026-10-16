@@ -50,6 +50,15 @@ test("a group cannot hold two members with the same nickname", async () => {
     const ok = (await srv.api("POST", "/api/sessions", { kind: "group", title: "G", members: [{ contactId: a.contact.id }] })).data;
     const p = await srv.api("PATCH", `/api/sessions/${ok.id}`, { members: [{ contactId: a.contact.id }, { contactId: b.contact.id }] });
     assert.equal(p.status, 400);
+    // Renaming a member to another member's nickname is refused; an unrelated contact can still take the name.
+    const c = await fakeAccountAndContact(srv.api, srv.store, { model: "deepseek-chat", nickname: "审稿人" });
+    const g = (await srv.api("POST", "/api/sessions", { kind: "group", title: "G2", members: [{ contactId: a.contact.id }, { contactId: c.contact.id }] })).data;
+    assert.ok(g.id);
+    const rn = await srv.api("PATCH", `/api/contacts/${c.contact.id}`, { nickname: "写手" });
+    assert.equal(rn.status, 400);
+    assert.equal(rn.data.code, "duplicate_nickname");
+    assert.equal((await srv.api("PATCH", `/api/contacts/${b.contact.id}`, { nickname: "审稿人" })).status, 200, "b is in no group with c");
+    assert.equal((await srv.api("PATCH", `/api/contacts/${c.contact.id}`, { nickname: "校对" })).status, 200);
   } finally {
     await srv.close();
   }

@@ -126,6 +126,19 @@ function assertDistinctNicknames(store: Store, members: Member[]): void {
   }
 }
 
+/** A contact being renamed must not collide with another member of any group it belongs to. */
+function assertNicknameFreeInGroups(store: Store, contactId: string, nickname: string): void {
+  for (const s of store.listSessions()) {
+    if (!s.members.some((m) => m.contactId === contactId)) continue;
+    for (const m of s.members) {
+      if (m.contactId === contactId) continue;
+      if ((store.getContact(m.contactId)?.nickname ?? m.contactId) === nickname) {
+        throw new HttpError(400, `"${nickname}" is already used by another member of "${s.title}"`, "duplicate_nickname");
+      }
+    }
+  }
+}
+
 /** "@names" typed by the user that match no member, so the page can say so instead of silently dropping them. */
 export function unknownMentions(text: string, nicknames: string[]): string[] {
   const out: string[] = [];
@@ -380,6 +393,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         }
         if ("temperature" in b) patch.temperature = numOr(b.temperature, undefined);
         if ("maxTokens" in b) patch.maxTokens = numOr(b.maxTokens, undefined);
+        if (typeof patch.nickname === "string") assertNicknameFreeInGroups(store, id, patch.nickname);
         const c = store.updateContact(id, patch);
         if (!c) throw new HttpError(404, "contact not found", "not_found");
         return json(res, 200, c);
