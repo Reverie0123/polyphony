@@ -8,8 +8,9 @@ import { messageText, summaryCandidates } from "./context.js";
 import { pickSecretary } from "./roles.js";
 import type { Broadcast, CallContact } from "./engine.js";
 
-export const SUMMARY_MIN_MESSAGES = 20;
-export const SUMMARY_MIN_TOKENS = 4000;
+// Kept close to the recent window (12 messages / 6k tokens) so unsummarised messages never pile up for long.
+export const SUMMARY_MIN_MESSAGES = 8;
+export const SUMMARY_MIN_TOKENS = 3000;
 
 export interface SummarizerDeps {
   store: Store;
@@ -29,6 +30,11 @@ export class Summarizer {
     return this.locks.size;
   }
 
+  /** True while a summary pass for this session is in flight (its result may already be stale). */
+  isRunning(sessionId: string): boolean {
+    return this.locks.has(sessionId);
+  }
+
   /** Decides whether a summary pass is due and runs it in the background. Returns the pass promise for tests. */
   maybeRun(session: Session): Promise<void> {
     const existing = this.locks.get(session.id);
@@ -45,6 +51,7 @@ export class Summarizer {
 
   private async run(session: Session, pending: Message[], lang: "zh" | "en"): Promise<void> {
     const { store, pricing, broadcast } = this.deps;
+    const epochAtStart = session.summaryEpoch ?? 0;
     const settings = store.getSettings();
     const secretary = pickSecretary(store, pricing, settings);
     if (!secretary) return;
@@ -59,7 +66,10 @@ export class Summarizer {
     const r = await this.deps.call(secretary, { model: secretary.model, system, messages: [{ role: "user", content: prompt }], maxTokens: 800 }, { purpose: "summary", sessionId: session.id });
     const text = r.text.trim();
     if (!text) return;
-    session.summary = { text, coversUpToSeq: pending[pending.length - 1].seq, generatedAt: new Date().toISOString(), dirty: false };
+    // A delete or edit that landed while this ran bumped summaryEpoch; the fresh summary may contain it, so it starts dirty.
+    const changedMeanwhile = (session.summaryEpoch ?? 0) !== epochAtStart;
+    session.summary = { text, coversUpToSeq: pending[pending.length - 1].seq, generatedAt: new Date().toISOString(), dirty: changedMeanwhile };
+    if (changedMeanwhile) setTimeout(() => { void this.maybeRun(session); }, 0);
     const costStr = r.cost.kind === "free" ? "¥0" : r.cost.priced ? `¥${r.cost.cny.toFixed(3)}` : "";
     const notice = store.appendMessage(session, {
       sender: "system",

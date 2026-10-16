@@ -22,7 +22,7 @@ export function tempDir() {
 /** A provider that streams a canned reply. `script` can be a function of the request for assertions. */
 export function fakeProvider(script) {
   return async function* (ctx, req) {
-    const plan = typeof script === "function" ? script(ctx, req) : script;
+    const plan = await (typeof script === "function" ? script(ctx, req) : script);
     if (plan.error && !plan.pieces?.length) throw plan.error;
     for (const piece of plan.pieces ?? ["Hello ", "world"]) {
       if (plan.delayMs) await new Promise((r) => setTimeout(r, plan.delayMs));

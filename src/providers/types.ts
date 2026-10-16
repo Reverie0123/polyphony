@@ -113,6 +113,35 @@ export async function* readLines(body: ReadableStream<Uint8Array> | null, signal
   }
 }
 
+/**
+ * Consumes a provider stream with an idle timeout (no event for idleMs) and a total cap (totalMs). On either, the
+ * controller is aborted and a ProviderError("timeout") is thrown, even if the underlying generator never yields again.
+ */
+export async function* withWatchdog<T>(source: AsyncGenerator<T>, controller: AbortController, idleMs: number, totalMs: number, onTimeout?: () => void): AsyncGenerator<T> {
+  const started = Date.now();
+  while (true) {
+    const budget = Math.min(idleMs, Math.max(0, totalMs - (Date.now() - started)));
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), budget); });
+    let result: IteratorResult<T> | "timeout";
+    try {
+      result = await Promise.race([source.next(), timeout]);
+    } finally {
+      // A rejected next() must not leave the (up to several minutes long) timer holding the process open.
+      clearTimeout(timer);
+    }
+    if (result === "timeout") {
+      onTimeout?.();
+      controller.abort();
+      void source.return(undefined).catch(() => undefined);
+      const idle = Date.now() - started < totalMs;
+      throw new ProviderError(idle ? `no data from the provider for ${Math.round(idleMs / 1000)}s` : `the reply exceeded ${Math.round(totalMs / 60000)} minutes`, "timeout");
+    }
+    if (result.done) return;
+    yield result.value;
+  }
+}
+
 /** Maps an HTTP status to a ProviderError with a user-facing code. */
 export function httpError(status: number, detail: string): ProviderError {
   const short = detail.slice(0, 300);

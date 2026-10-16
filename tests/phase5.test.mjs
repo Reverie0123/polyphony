@@ -8,7 +8,7 @@ import { tempDir } from "./helpers.mjs";
 test("compareSemver", () => {
   assert.ok(compareSemver("0.2.0", "0.1.9") > 0);
   assert.ok(compareSemver("v1.0.0", "1.0.0") === 0);
-  assert.ok(compareSemver("0.1.0-beta", "0.1.0") === 0);
+  assert.ok(compareSemver("0.1.0-beta", "0.1.0") < 0, "a prerelease is older than its release");
   assert.ok(compareSemver("0.1.0", "0.1.1") < 0);
 });
 

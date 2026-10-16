@@ -117,6 +117,8 @@ export interface Session {
   budget: Budget;
   spentTotal: number;
   summary: Summary | null;
+  /** Bumped whenever a message inside the summary's range is deleted, edited or excluded (see summary.ts). */
+  summaryEpoch?: number;
   discussion: Discussion | null;
   allowModelMentions: boolean;
   /** Reply to several @mentions at once instead of one after another (the default lets later ones see earlier replies). */

@@ -10,6 +10,7 @@ import { computeCost } from "./pricing.js";
 import { buildContext } from "./context.js";
 import { McpClient, type McpTool } from "./mcp-client.js";
 import { getChatFn, ProviderError, type ChatMessage, type ToolDef } from "./providers/index.js";
+import { withWatchdog } from "./providers/types.js";
 import { resolveExecutable } from "./providers/cli-base.js";
 import type { Broadcast } from "./engine.js";
 
@@ -221,9 +222,9 @@ export class DeskDock {
         const calls: { id: string; name: string; args: string }[] = [];
         let usage: Usage | undefined;
         let usageMissing = false;
-        for await (const ev of chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, {
+        for await (const ev of withWatchdog(chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, {
           model: driver.model, system, messages: [...built.messages, ...loop], tools, temperature: driver.temperature, maxTokens: driver.maxTokens, signal: controller.signal, cacheSystem: true,
-        })) {
+        }), controller, 300000, 1800000)) {
           if (ev.type === "delta") text += ev.text;
           else if (ev.type === "tool_call") calls.push({ id: ev.id || newId("call_"), name: ev.name, args: ev.args });
           else if (ev.type === "usage") usage = ev.usage;

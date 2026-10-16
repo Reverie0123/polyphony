@@ -9,6 +9,7 @@ import { Store } from "./store.js";
 import { Pricing, computeCost } from "./pricing.js";
 import { buildContext, cleanReply } from "./context.js";
 import { getChatFn, ProviderError, type ChatRequest } from "./providers/index.js";
+import { withWatchdog } from "./providers/types.js";
 
 export type Broadcast = (event: string, data: unknown) => void;
 
@@ -51,6 +52,9 @@ export class Engine {
   private waiting: (() => void)[] = [];
   private active = new Map<string, AbortController>();
   private background = 0;
+  /** Streaming watchdog: abort when nothing arrives for idleMs, or the whole reply exceeds totalMs. */
+  idleMs = 300000;
+  totalMs = 1800000;
 
   constructor(private deps: EngineDeps) {}
 
@@ -78,7 +82,9 @@ export class Engine {
         let usage: Usage | undefined;
         let model = contact.model;
         let usageMissing = false;
-        for await (const ev of chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, { ...req, signal: AbortSignal.timeout(meta.timeoutMs ?? 600000) })) {
+        const ctl = new AbortController();
+        const total = meta.timeoutMs ?? 600000;
+        for await (const ev of withWatchdog(chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, { ...req, signal: ctl.signal }), ctl, Math.min(this.idleMs, total), total)) {
           if (ev.type === "delta") text += ev.text;
           else if (ev.type === "usage") usage = ev.usage;
           else if (ev.type === "status" && ev.text === "usage-missing") usageMissing = true;
@@ -175,6 +181,7 @@ export class Engine {
     const controller = new AbortController();
     this.active.set(msg.id, controller);
     const started = Date.now();
+    let timedOut = false;
     let usage: Usage | undefined;
     let usageMissing = false;
     let finish: string | undefined;
@@ -200,7 +207,8 @@ export class Engine {
 
     try {
       await this.slot(async () => {
-        for await (const ev of chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, req)) {
+        const stream = withWatchdog(chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, req), controller, this.idleMs, this.totalMs, () => { timedOut = true; });
+        for await (const ev of stream) {
           switch (ev.type) {
             case "delta":
               msg.text += ev.text;
@@ -237,8 +245,8 @@ export class Engine {
       msg.status = "done";
     } catch (err) {
       flush(true);
-      const e = classifyError(err, controller.signal);
-      if (e.code === "cancelled" || controller.signal.aborted) {
+      const e = timedOut ? new ProviderError("the provider stopped sending data", "timeout") : classifyError(err, controller.signal);
+      if (e.code !== "timeout" && (e.code === "cancelled" || controller.signal.aborted)) {
         msg.status = "cancelled";
         msg.error = { code: "cancelled", message: "cancelled" };
       } else {

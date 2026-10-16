@@ -63,15 +63,21 @@ export class McpClient {
     child.stderr?.on("data", (d: Buffer) => { for (const line of d.toString("utf8").split("\n")) if (line.trim()) this.opts.onLog?.(line); });
     child.on("error", (e) => this.failAll(new Error(`cannot start ${path.basename(exe)}: ${e.message}`)));
     child.on("close", (code) => { this.failAll(new Error(`MCP server exited with code ${code}`)); this.opts.onExit?.(code); });
-    const init = (await this.request("initialize", {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: this.opts.clientName ?? "polyphony", version: this.opts.clientVersion ?? "0.1.0" },
-    })) as { serverInfo?: { name?: string; version?: string }; instructions?: string };
-    this.serverInfo = init.serverInfo ?? {};
-    this.instructions = init.instructions ?? "";
-    this.notify("notifications/initialized", {});
-    await this.refreshTools();
+    try {
+      const init = (await this.request("initialize", {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: this.opts.clientName ?? "polyphony", version: this.opts.clientVersion ?? "0.1.0" },
+      })) as { serverInfo?: { name?: string; version?: string }; instructions?: string };
+      this.serverInfo = init.serverInfo ?? {};
+      this.instructions = init.instructions ?? "";
+      this.notify("notifications/initialized", {});
+      await this.refreshTools();
+    } catch (err) {
+      // A child that started but never answered initialize would otherwise live on as an orphan.
+      this.close();
+      throw err;
+    }
   }
 
   async refreshTools(): Promise<McpTool[]> {
@@ -137,6 +143,9 @@ export class McpClient {
         if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
       } else if (msg.method === "ping" && msg.id !== undefined) {
         this.child?.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\n");
+      } else if (msg.method && msg.id !== undefined) {
+        // sampling, roots, elicitation: not supported by this minimal client; answer so the server does not wait forever.
+        this.child?.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `${msg.method} is not supported by this client` } }) + "\n");
       }
       // Other server notifications (logging, list_changed) are ignored in this minimal client.
     }

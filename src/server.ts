@@ -465,6 +465,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
           if (old) {
             old.excludedFromContext = true;
             if (s.summary && old.seq <= s.summary.coversUpToSeq) s.summary.dirty = true;
+            if ((s.summary && old.seq <= s.summary.coversUpToSeq) || summarizer.isRunning(s.id)) s.summaryEpoch = (s.summaryEpoch ?? 0) + 1;
             hub.broadcast("message.updated", { sessionId: s.id, message: old });
           }
         }
@@ -538,6 +539,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
           s.messages = s.messages.filter((x) => x.id !== mid);
           const touchesSummary = !!s.summary && m.seq <= s.summary.coversUpToSeq;
           if (touchesSummary) s.summary!.dirty = true;
+          if (touchesSummary || summarizer.isRunning(s.id)) s.summaryEpoch = (s.summaryEpoch ?? 0) + 1; // a pass in flight may already include this message
           store.saveSession(s);
           hub.broadcast("message.deleted", { sessionId: s.id, messageId: mid });
           if (touchesSummary) void summarizer.maybeRun(s);
@@ -550,6 +552,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
             m.excludedFromContext = b.excludedFromContext;
             touchesSummary = !!s.summary && m.seq <= s.summary.coversUpToSeq;
             if (touchesSummary) s.summary!.dirty = true;
+          if (touchesSummary || summarizer.isRunning(s.id)) s.summaryEpoch = (s.summaryEpoch ?? 0) + 1; // a pass in flight may already include this message
           }
           if (typeof b.starred === "boolean") m.starred = b.starred;
           if (typeof b.pinned === "boolean") m.pinned = b.pinned;

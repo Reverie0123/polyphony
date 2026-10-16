@@ -23,12 +23,18 @@ export interface UpdateInfo {
 }
 
 export function compareSemver(a: string, b: string): number {
-  const pa = a.replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
+  const [ba, prea] = a.replace(/^v/, "").split("-");
+  const [bb, preb] = b.replace(/^v/, "").split("-");
+  const pa = ba.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = bb.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) {
     const d = (pa[i] ?? 0) - (pb[i] ?? 0);
     if (d) return d;
   }
+  // Same base version: a prerelease sorts below the release ("1.2.0-beta" < "1.2.0"), prereleases compare as strings.
+  if (prea && !preb) return -1;
+  if (!prea && preb) return 1;
+  if (prea && preb) return prea < preb ? -1 : prea > preb ? 1 : 0;
   return 0;
 }
 
@@ -84,9 +90,10 @@ export class Updater {
   }
 
   /** Runs `npm install -g polyphony-chat@latest` for global installs. Resolves with the log; the caller restarts. */
-  applyGlobal(onLine?: (line: string) => void): Promise<{ ok: boolean; log: string }> {
-    return new Promise((resolve) => {
-      const registry = this.last?.registry ?? REGISTRIES[0];
+  async applyGlobal(onLine?: (line: string) => void): Promise<{ ok: boolean; log: string }> {
+    // The mirror is only used to look up versions; the package itself is installed from the official registry so the
+    // integrity data comes from the source. The mirror is a fallback when npmjs is unreachable.
+    const attempt = (registry: string) => new Promise<{ ok: boolean; log: string }>((resolve) => {
       const cmd = `npm install -g ${PACKAGE_NAME}@latest --registry=${registry} --no-audit --no-fund`;
       const child = process.platform === "win32"
         ? spawn("cmd.exe", ["/d", "/s", "/c", cmd], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
@@ -98,6 +105,11 @@ export class Updater {
       child.on("error", (e) => resolve({ ok: false, log: log + e.message }));
       child.on("close", (code) => resolve({ ok: code === 0, log: log.slice(-4000) }));
     });
+    const official = await attempt("https://registry.npmjs.org");
+    if (official.ok) return official;
+    onLine?.("\n[official registry failed; retrying through the mirror]\n");
+    const mirror = await attempt(REGISTRIES[0]);
+    return { ok: mirror.ok, log: official.log + "\n---\n" + mirror.log };
   }
 }
 

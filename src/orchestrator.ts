@@ -350,7 +350,10 @@ export class Orchestrator {
   async onReply(session: Session, m: Message): Promise<void> {
     if (session.kind !== "group" || m.sender === "user" || m.sender === "system" || m.status !== "done") return;
     const members = session.members.map((x) => ({ contactId: x.contactId, nickname: this.nick(x.contactId) }));
-    const targets = parseMentionsIn(m.text, members).filter((id) => id !== m.sender && (id !== DESKDOCK_CONTACT_ID || this.deps.runDeskdock));
+    const inDiscussionNow = !!session.discussion && session.discussion.status === "running";
+    // Discussion turns are scheduled by the loop only: a hand-off here would make a member speak twice in a round,
+    // pay outside the round budget and escape the stop conditions. DeskDock keeps its card since the user decides.
+    const targets = parseMentionsIn(m.text, members).filter((id) => id !== m.sender && (id !== DESKDOCK_CONTACT_ID || this.deps.runDeskdock) && !(inDiscussionNow && id !== DESKDOCK_CONTACT_ID));
     if (!targets.length) return;
     const budget = this.mentionBudget.get(session.id) ?? new Set<string>();
     this.mentionBudget.set(session.id, budget);

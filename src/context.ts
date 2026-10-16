@@ -152,10 +152,18 @@ export function buildContext(session: Session, self: Contact, member: Member | u
   const eligible = session.messages.filter((m) => includeInHistory(m, self.id));
   const window: Message[] = [];
   let tokens = 0;
+  const quotedId = opts.trigger?.replyTo;
+  // Messages after the summary's coverage that have not been summarised yet must not vanish: the window keeps growing
+  // backwards over them (up to a hard cap of twice the token budget) until the secretary catches up.
+  const covered = session.summary && !session.summary.dirty ? session.summary.coversUpToSeq : 0;
+  const hardCap = session.context.recentTokens * 2;
   for (let i = eligible.length - 1; i >= 0; i--) {
     const m = eligible[i];
-    const tk = estimateTokens(messageText(m, opts.lang).slice(0, maxChars)) + 4;
-    if (window.length >= session.context.recentCount || (window.length > 0 && tokens + tk > session.context.recentTokens)) break;
+    const full = messageText(m, opts.lang);
+    const tk = estimateTokens(m.id === quotedId ? full : full.slice(0, maxChars)) + 4;
+    const withinBudget = window.length < session.context.recentCount && (window.length === 0 || tokens + tk <= session.context.recentTokens);
+    const unsummarised = m.seq > covered && tokens + tk <= hardCap;
+    if (!withinBudget && !unsummarised) break;
     window.unshift(m);
     tokens += tk;
   }
@@ -173,10 +181,10 @@ export function buildContext(session: Session, self: Contact, member: Member | u
   if (summaryUsed) push("user", `${t.summaryHead}\n${session.summary!.text.trim()}`);
 
   // Quoted message outside the window is attached in full before the history.
-  const quotedId = opts.trigger?.replyTo;
   if (quotedId && !window.some((m) => m.id === quotedId)) {
     const q = session.messages.find((m) => m.id === quotedId);
-    if (q) push("user", `${t.quotedHead}\n[${nick(q.sender)}]: ${messageText(q, opts.lang)}`);
+    // A quote is subject to the same visibility rules as history: a whisper to others never leaks through it.
+    if (q && includeInHistory(q, self.id)) push("user", `${t.quotedHead}\n[${nick(q.sender)}]: ${messageText(q, opts.lang)}`);
   }
 
   for (const m of window) {

@@ -49,9 +49,11 @@ test("window honours recentCount and drops a leading assistant turn", () => {
   seq = 1;
   const many = [];
   for (let i = 0; i < 10; i++) { many.push(msg("user", "q" + i)); many.push(msg("a", "r" + i)); }
-  const s = session("direct", many, { context: { recentCount: 4, recentTokens: 6000 } });
+  // Unsummarised messages are never dropped, so the window limit applies once a summary covers the earlier ones.
+  const s = session("direct", many, { context: { recentCount: 4, recentTokens: 6000 }, summary: { text: "之前的对话", coversUpToSeq: 16, generatedAt: "", dirty: false } });
   const b = buildContext(s, contacts[0], s.members[0], contacts, { lang: "zh" });
   assert.equal(b.info.historyCount, 4);
+  assert.equal(b.info.summaryUsed, true);
   assert.equal(b.messages[0].role, "user");
   // The window ends on an assistant turn, so a continue nudge is appended.
   assert.equal(b.messages[b.messages.length - 1].role, "user");
@@ -79,7 +81,7 @@ test("quoted message outside the window is attached in full; excluded, whisper a
   list.push(msg("a", "broken", { status: "error" }));
   const trigger = msg("user", "回这条", { replyTo: quoted.id });
   list.push(trigger);
-  const s = session("group", list, { context: { recentCount: 3, recentTokens: 6000 } });
+  const s = session("group", list, { context: { recentCount: 3, recentTokens: 6000 }, summary: { text: "早先的摘要", coversUpToSeq: quoted.seq + 2, generatedAt: "", dirty: false } });
   const b = buildContext(s, contacts[0], s.members[0], contacts, { lang: "zh", trigger });
   const all = b.messages.map((m) => m.content).join("\n");
   assert.ok(all.includes("用户引用了这条消息"));
