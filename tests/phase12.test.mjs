@@ -57,6 +57,7 @@ test("a group cannot hold two members with the same nickname", async () => {
     const rn = await srv.api("PATCH", `/api/contacts/${c.contact.id}`, { nickname: "写手" });
     assert.equal(rn.status, 400);
     assert.equal(rn.data.code, "duplicate_nickname");
+    assert.deepEqual(rn.data.vars, { nickname: "写手", session: "G2" }, "the page gets the names to show");
     assert.equal((await srv.api("PATCH", `/api/contacts/${b.contact.id}`, { nickname: "审稿人" })).status, 200, "b is in no group with c");
     assert.equal((await srv.api("PATCH", `/api/contacts/${c.contact.id}`, { nickname: "校对" })).status, 200);
   } finally {

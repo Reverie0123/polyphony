@@ -45,7 +45,7 @@ export async function uploadFile(file) {
 export class ApiError extends Error {
   constructor(status, body) {
     const code = body?.code || "error";
-    const translated = t("err." + code);
+    const translated = t("err." + code, body?.vars);
     super(translated !== "err." + code ? translated : (body?.error || `HTTP ${status}`));
     this.status = status;
     this.code = code;

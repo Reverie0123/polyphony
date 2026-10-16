@@ -249,7 +249,7 @@ const zh = {
   "roles.made": "已生成 {n} 个角色并勾选",
   "roles.hint": "只有一家 Key 也能开群：同一个模型带不同人设就是不同的成员。生成的角色会出现在联系人列表里，可以改名改人设。",
   "contacts.cloneRole": "复制为新角色",
-  "err.duplicate_nickname": "群里有两个成员昵称一样，@ 会分不清，先改掉一个。",
+  "err.duplicate_nickname": "群「{session}」里已经有一个成员叫「{nickname}」，@ 会分不清，先改掉一个。",
   "confirm": "确定",
 };
 
@@ -503,7 +503,7 @@ const en = {
   "roles.made": "{n} roles created and selected",
   "roles.hint": "A single API key is enough for a group: the same model with different personas makes different members. Generated roles appear in the contact list and can be renamed or rewritten.",
   "contacts.cloneRole": "Copy as new role",
-  "err.duplicate_nickname": "Two members share a nickname, so @ could not tell them apart; rename one first.",
+  "err.duplicate_nickname": "\"{session}\" already has a member called \"{nickname}\", so @ could not tell them apart; rename one first.",
   "confirm": "OK",
 };
 

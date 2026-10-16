@@ -46,7 +46,8 @@ export interface ServerOptions {
 }
 
 class HttpError extends Error {
-  constructor(readonly status: number, message: string, readonly code = "error") {
+  /** `vars` are substituted into the translated message on the page ({nickname}, {session}, ...). */
+  constructor(readonly status: number, message: string, readonly code = "error", readonly vars?: Record<string, string>) {
     super(message);
   }
 }
@@ -116,12 +117,12 @@ function safeEqual(a: string, b: string): boolean {
 export { parseMentionsIn as parseMentions } from "./mentions.js";
 
 /** Throws when two members would share a nickname: @ resolves by nickname, so the second one could never be addressed. */
-function assertDistinctNicknames(store: Store, members: Member[]): void {
+function assertDistinctNicknames(store: Store, members: Member[], session: string): void {
   const seen = new Map<string, string>();
   for (const m of members) {
     const nick = store.getContact(m.contactId)?.nickname ?? m.contactId;
     const other = seen.get(nick);
-    if (other && other !== m.contactId) throw new HttpError(400, `two members share the nickname "${nick}"; rename one of them first`, "duplicate_nickname");
+    if (other && other !== m.contactId) throw new HttpError(400, `two members of "${session}" share the nickname "${nick}"; rename one of them first`, "duplicate_nickname", { nickname: nick, session });
     seen.set(nick, m.contactId);
   }
 }
@@ -133,7 +134,7 @@ function assertNicknameFreeInGroups(store: Store, contactId: string, nickname: s
     for (const m of s.members) {
       if (m.contactId === contactId) continue;
       if ((store.getContact(m.contactId)?.nickname ?? m.contactId) === nickname) {
-        throw new HttpError(400, `"${nickname}" is already used by another member of "${s.title}"`, "duplicate_nickname");
+        throw new HttpError(400, `"${nickname}" is already used by another member of "${s.title}"`, "duplicate_nickname", { nickname, session: s.title });
       }
     }
   }
@@ -416,8 +417,8 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
           .filter((m) => store.getContact(str(m.contactId)))
           .map((m, i) => ({ contactId: str(m.contactId), roleCard: str(m.roleCard), muted: false, order: i, driverContactId: str(m.driverContactId) || undefined }));
         if (!members.length) throw new HttpError(400, "a session needs at least one member", "no_members");
-        assertDistinctNicknames(store, members);
         if (kind === "direct" && members.length !== 1) throw new HttpError(400, "a direct chat has exactly one member", "bad_members");
+        assertDistinctNicknames(store, members, str(b.title) || members.map((m) => store.getContact(m.contactId)!.nickname).join("、"));
         const title = str(b.title) || (kind === "direct" ? store.getContact(members[0].contactId)!.nickname : members.map((m) => store.getContact(m.contactId)!.nickname).join("、"));
         const s = store.createSession({
           kind,
@@ -453,7 +454,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
           const next = raw.filter((m) => store.getContact(str(m.contactId))).map((m, i) => ({
             contactId: str(m.contactId), roleCard: str(m.roleCard), muted: bool(m.muted), order: i, driverContactId: str(m.driverContactId) || undefined,
           }));
-          assertDistinctNicknames(store, next);
+          assertDistinctNicknames(store, next, s.title);
           s.members = next;
         }
         store.saveSession(s);
@@ -656,7 +657,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
     }
     route(req, res, url).catch((err) => {
       if (res.headersSent) { try { res.end(); } catch { /* ignore */ } return; }
-      if (err instanceof HttpError) json(res, err.status, { error: err.message, code: err.code });
+      if (err instanceof HttpError) json(res, err.status, { error: err.message, code: err.code, ...(err.vars ? { vars: err.vars } : {}) });
       else {
         console.error(err);
         json(res, 500, { error: (err as Error).message ?? "internal error", code: "internal" });
