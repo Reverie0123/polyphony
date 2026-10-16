@@ -279,8 +279,11 @@ export function openNewSession(ctx, onCreated) {
         try {
           const made = [];
           for (let i = 0; i < tp.roles.length; i++) {
-            const nickname = tp.names?.[i] ?? `${base.nickname} ${i + 1}`;
-            const existing = ctx.contacts.find((c) => c.nickname === nickname && c.accountId === base.accountId && c.model === base.model);
+            let nickname = tp.names?.[i] ?? `${base.nickname} ${i + 1}`;
+            const sameRole = ctx.contacts.find((c) => c.nickname === nickname && c.accountId === base.accountId && c.model === base.model);
+            // The same role name on a different model gets the base contact's name appended, so a group can hold both.
+            if (!sameRole && ctx.contacts.some((c) => c.nickname === nickname)) nickname = `${nickname}（${base.nickname}）`;
+            const existing = sameRole;
             const c = existing ?? await post("/api/contacts", { accountId: base.accountId, model: base.model, nickname, avatar: nickname.slice(0, 1), persona: tp.roles[i], supportsTools: base.supportsTools, supportsVision: base.supportsVision, temperature: base.temperature ?? null, maxTokens: base.maxTokens ?? null });
             made.push(c);
           }
@@ -288,7 +291,9 @@ export function openNewSession(ctx, onCreated) {
           // Rebuild the pick list with the new contacts and select the roles in template order.
           const list = ctx.contacts.filter((c) => c.enabled);
           pick.innerHTML = list.map((c) => `<div class="pick-row" data-id="${c.id}"><span class="avatar sm ${c.id === "deskdock" ? "deskdock" : ""}">${escapeHtml((c.avatar || c.nickname).slice(0, 2))}</span><span class="grow">${escapeHtml(c.nickname)}</span><span class="hint">${escapeHtml(c.model)}</span></div>`).join("");
+          const keep = [...picked].filter((id) => id === "deskdock");
           picked.clear();
+          for (const id of keep) picked.add(id);
           for (const c of made) picked.add(c.id);
           const intro = modal.querySelector("#n-intro");
           if (!intro.value) intro.value = tp.intro;

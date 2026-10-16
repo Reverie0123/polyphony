@@ -390,7 +390,12 @@ export class Orchestrator {
     if (approve) {
       const source = session.messages.find((x) => x.id === card.action!.sourceMessageId);
       if (card.action.to === DESKDOCK_CONTACT_ID) { if (source && this.deps.runDeskdock) await this.deps.runDeskdock(session, source); }
-      else await this.deps.engine.reply(session, card.action.to, source, { instruction: this.t().mentionTurn(this.nick(card.action.from)) });
+      else {
+        const extra = await this.deps.engine.reply(session, card.action.to, source, { instruction: this.t().mentionTurn(this.nick(card.action.from)) });
+        // A card created before the discussion but approved during it is paid by the discussion budget.
+        const d = session.discussion;
+        if (d && d.status === "running" && extra.cost) { d.spent += extra.cost.usd; d.roundSpent += extra.cost.usd; this.deps.store.saveSession(session); }
+      }
     }
     return true;
   }

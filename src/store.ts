@@ -32,9 +32,26 @@ export function recoverTmp(file: string): void {
   const tmp = file + ".tmp";
   if (!existsSync(tmp)) return;
   try {
-    if (!existsSync(file) || statSync(tmp).mtimeMs >= statSync(file).mtimeMs) renameSync(tmp, file);
+    // A .tmp cut short by a crash while it was being written must never replace a good file: it has to parse first.
+    const newer = !existsSync(file) || statSync(tmp).mtimeMs >= statSync(file).mtimeMs;
+    if (newer && tmpLooksComplete(tmp)) renameSync(tmp, file);
     else unlinkSync(tmp);
   } catch { /* still locked: the next write retries */ }
+}
+
+function tmpLooksComplete(tmp: string): boolean {
+  try {
+    const text = readFileSync(tmp, "utf8");
+    if (tmp.endsWith(".jsonl.tmp")) {
+      if (text.length && !text.endsWith("\n")) return false;
+      for (const line of text.split("\n")) if (line.trim()) JSON.parse(line);
+      return true;
+    }
+    if (tmp.endsWith(".json.tmp")) { JSON.parse(text); return true; }
+    return text.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -431,6 +448,7 @@ export class Store {
   readLedger(): LedgerEntry[] {
     if (this.ledgerCache) return this.ledgerCache;
     const file = this.file("ledger.jsonl");
+    recoverTmp(file);
     const all: LedgerEntry[] = [];
     if (existsSync(file)) {
       for (const line of readFileSync(file, "utf8").split("\n")) {

@@ -224,7 +224,7 @@ export class DeskDock {
         let usageMissing = false;
         for await (const ev of withWatchdog(chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, {
           model: driver.model, system, messages: [...built.messages, ...loop], tools, temperature: driver.temperature, maxTokens: driver.maxTokens, signal: controller.signal, cacheSystem: true,
-        }), controller, 300000, 1800000)) {
+        }), controller, Math.max(1, settings.streamIdleMinutes ?? 5) * 60000, Math.max(1, settings.streamTotalMinutes ?? 30) * 60000)) {
           if (ev.type === "delta") text += ev.text;
           else if (ev.type === "tool_call") calls.push({ id: ev.id || newId("call_"), name: ev.name, args: ev.args });
           else if (ev.type === "usage") usage = ev.usage;
