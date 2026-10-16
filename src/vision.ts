@@ -120,7 +120,7 @@ export class Vision {
         messages: [{ role: "user", content: prompt }],
         images: [{ mime: att.mime, data: file.bytes.toString("base64") }],
         maxTokens: 1200,
-      }, { purpose: "vision", sessionId: session.id, messageId: message.id });
+      }, { purpose: "vision", sessionId: session.id, messageId: message.id, timeoutMs: 90000 });
       result = { caption: r.text.trim(), by: contact.nickname, usage: r.usage, cost: r.cost, at: new Date().toISOString() };
     } else {
       const ocr = await (this.deps.ocr ?? ocrImage)(file.file);

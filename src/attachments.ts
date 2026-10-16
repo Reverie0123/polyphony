@@ -1,7 +1,7 @@
 // Attachment storage: files are kept once under attachments/<sha256>.<ext>; text files carry their content as the caption
 // so the context builder can inline them; images get a caption from the vision step later.
 import { createHash } from "node:crypto";
-import { existsSync, writeFileSync, readFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync, mkdirSync, renameSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { Attachment } from "./models.js";
 
@@ -61,7 +61,7 @@ export class Attachments {
     const ext = EXT_BY_MIME[mime] ?? path.extname(name).slice(1).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) ?? "bin";
     const file = path.join(this.dir, `${hash}.${ext || "bin"}`);
     if (!existsSync(file)) writeFileSync(file, bytes);
-    const att: Attachment = { hash, name: path.basename(name).slice(0, 120), mime, size: bytes.length };
+    const att: Attachment = { hash, name: path.basename(name).slice(0, 120), mime, size: bytes.length, file: path.basename(file) };
     if (!isImage(mime) && isTextFile(name, mime)) {
       const text = bytes.toString("utf8");
       att.caption = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) + "\n…[truncated]" : text;
@@ -79,12 +79,11 @@ export class Attachments {
 
   pathOf(hash: string): string | undefined {
     if (!/^[a-f0-9]{64}$/.test(hash)) return undefined;
-    const prefix = path.join(this.dir, hash);
-    for (const ext of [...new Set([...Object.values(EXT_BY_MIME), "bin"])]) {
-      const p = `${prefix}.${ext}`;
-      if (existsSync(p)) return p;
-    }
-    return undefined;
+    const known = this.index[hash]?.file;
+    if (known && existsSync(path.join(this.dir, known))) return path.join(this.dir, known);
+    // Older records or a lost index: any file in the folder that starts with the hash is the one.
+    const hit = readdirSync(this.dir).find((f) => f.startsWith(hash + "."));
+    return hit ? path.join(this.dir, hit) : undefined;
   }
 
   read(hash: string): { bytes: Buffer; file: string } | undefined {

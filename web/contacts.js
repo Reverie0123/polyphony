@@ -229,7 +229,8 @@ export function openNewSession(ctx, onCreated) {
           const kind = q("#n-kind").value;
           const tp = templates().find((x) => x.id === q("#n-template").value);
           const driverId = q("#n-driver").value;
-          const members = [...picked].map((contactId, i) => ({ contactId, roleCard: tp?.roles[i] ?? "", driverContactId: contactId === "deskdock" ? driverId : undefined }));
+          let roleIndex = 0;
+          const members = [...picked].map((contactId) => ({ contactId, roleCard: contactId === "deskdock" ? "" : (tp?.roles[roleIndex++] ?? ""), driverContactId: contactId === "deskdock" ? driverId : undefined }));
           if (!members.length) throw new Error(t("new.pick"));
           const body = { kind, members, title: q("#n-title").value.trim(), intro: q("#n-intro").value || (kind === "group" && tp ? tp.intro : ""), templateId: tp?.id };
           const perRound = Number(q("#n-per-round").value);

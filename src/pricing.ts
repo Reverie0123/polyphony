@@ -86,11 +86,11 @@ export class Pricing {
     const exact = this.data.overrides[n] ?? this.data.online[n] ?? BUILTIN_PRICES[n];
     if (exact) return exact;
     // "deepseek-chat-v3", "gpt-4o-mini-2024-07-18-ft" and similar: take the longest known name this one extends.
+    const tables = [this.data.overrides, this.data.online, BUILTIN_PRICES];
     let best: string | undefined;
-    for (const table of [this.data.overrides, this.data.online, BUILTIN_PRICES]) {
-      for (const key of Object.keys(table)) if (n.startsWith(key + "-") && (!best || key.length > best.length)) best = key;
-      if (best) return table[best];
-    }
+    for (const table of tables) for (const key of Object.keys(table)) if (n.startsWith(key + "-") && (!best || key.length > best.length)) best = key;
+    if (!best) return undefined;
+    for (const table of tables) if (table[best]) return table[best];
     return undefined;
   }
 

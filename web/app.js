@@ -160,8 +160,9 @@ function openSettings() {
           const q = (id) => modal.querySelector(id);
           await patch("/api/settings", {
             lang: q("#s-lang").value, theme: q("#s-theme").value, currency: q("#s-currency").value,
-            usdToCny: Number(q("#s-rate").value) || 7.2, costWarn: Number(q("#s-warn").value), costAlert: Number(q("#s-alert").value),
-            autoExitMinutes: Number(q("#s-exit").value), concurrency: Number(q("#s-conc").value) || 4,
+            usdToCny: Number(q("#s-rate").value) || 7.2,
+            costWarn: q("#s-warn").value === "" ? 0.5 : Number(q("#s-warn").value), costAlert: q("#s-alert").value === "" ? 2 : Number(q("#s-alert").value),
+            autoExitMinutes: q("#s-exit").value === "" ? 10 : Number(q("#s-exit").value), concurrency: Number(q("#s-conc").value) || 4,
             cliEnabled: q("#s-cli").checked, lanAccess: q("#s-lan").checked, deskdockCommand: q("#s-dd-cmd").value.trim(),
           });
           await ctx.reload();
@@ -176,7 +177,7 @@ function openSettings() {
       const load = async () => {
         const data = await get("/api/pricing");
         fetched.textContent = data.fetchedAt ? new Date(data.fetchedAt).toLocaleString() : "";
-        const used = new Set(ctx.contacts.map((c) => c.model.toLowerCase()));
+        const used = new Set(ctx.contacts.map((c) => c.model.toLowerCase()).filter(Boolean));
         const rows = data.table.filter((r) => used.size === 0 || [...used].some((u) => u.includes(r.model) || r.model.includes(u)) || r.source === "override");
         const show = rows.length ? rows : data.table.slice(0, 12);
         box.innerHTML = `<table class="pricing"><tr><th>model</th><th>in</th><th>out</th><th>cache r</th><th>cache w</th><th></th></tr>${show.map((r) => `<tr data-model="${escapeHtml(r.model)}"><td>${escapeHtml(r.model)} <span class="pill">${r.source}</span></td><td><input value="${r.price.input}"></td><td><input value="${r.price.output}"></td><td><input value="${r.price.cacheRead}"></td><td><input value="${r.price.cacheWrite}"></td><td><button class="btn sm" data-save>✓</button></td></tr>`).join("")}</table>`;

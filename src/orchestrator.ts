@@ -366,7 +366,8 @@ export class Orchestrator {
       if (session.allowModelMentions && to !== DESKDOCK_CONTACT_ID) {
         if (!inDiscussion) this.autoChain.set(session.id, depth + 1);
         this.notice(session, this.t().mentionAuto(this.nick(m.sender), this.nick(to)));
-        await this.deps.engine.reply(session, to, m, { instruction: this.t().mentionTurn(this.nick(m.sender)) });
+        const extra = await this.deps.engine.reply(session, to, m, { instruction: this.t().mentionTurn(this.nick(m.sender)) });
+        this.countDiscussionCost(session, extra);
       } else {
         // DeskDock always asks: a model must never operate the computer without the user's click.
         this.notice(session, this.t().mentionAsk(this.nick(m.sender), this.nick(to)), {
@@ -375,6 +376,11 @@ export class Orchestrator {
       }
     }
     if (!session.discussion || session.discussion.status !== "running") this.mentionBudget.delete(session.id);
+  }
+
+  private countDiscussionCost(session: Session, m: Message): void {
+    const d = session.discussion;
+    if (d && d.status === "running" && m.cost) { d.spent += m.cost.usd; d.roundSpent += m.cost.usd; this.deps.store.saveSession(session); }
   }
 
   /** Resolves a pending mention card. */
@@ -387,7 +393,7 @@ export class Orchestrator {
     if (approve) {
       const source = session.messages.find((x) => x.id === card.action!.sourceMessageId);
       if (card.action.to === DESKDOCK_CONTACT_ID) { if (source && this.deps.runDeskdock) await this.deps.runDeskdock(session, source); }
-      else await this.deps.engine.reply(session, card.action.to, source, { instruction: this.t().mentionTurn(this.nick(card.action.from)) });
+      else this.countDiscussionCost(session, await this.deps.engine.reply(session, card.action.to, source, { instruction: this.t().mentionTurn(this.nick(card.action.from)) }));
     }
     return true;
   }

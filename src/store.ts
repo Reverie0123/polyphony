@@ -1,5 +1,5 @@
 // JSON persistence. One file per collection, one file per session; every write goes through a temp file and rename.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, appendFileSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import {
@@ -45,13 +45,14 @@ export function writeJsonAtomic(file: string, value: unknown): void {
   const tmp = file + ".tmp";
   writeFileSync(tmp, JSON.stringify(value, null, 1), "utf8");
   // On Windows a scanner or editor holding the target makes rename fail with EPERM/EBUSY for a moment; retry briefly.
-  for (let attempt = 0; ; attempt++) {
-    try { renameSync(tmp, file); return; }
-    catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (attempt >= 3 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw e;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30 * (attempt + 1));
-    }
+  try {
+    renameSync(tmp, file);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw e;
+    // The target is held open by a scanner or editor: copy over it instead of blocking the event loop with a retry wait.
+    copyFileSync(tmp, file);
+    try { unlinkSync(tmp); } catch { /* ignore */ }
   }
 }
 
@@ -232,7 +233,9 @@ export class Store {
     const out: Omit<Session, "messages">[] = [];
     for (const name of readdirSync(path.join(this.dir, "sessions"))) {
       if (!name.endsWith(".json")) continue;
-      const s = this.getSession(name.slice(0, -5));
+      const id = name.slice(0, -5);
+      // Listing must not pull every session into the cache; uncached ones are parsed and let go.
+      const s = this.sessionCache.get(id) ?? this.readSessionFile(id);
       if (!s) continue;
       const { messages, ...meta } = s;
       out.push({ ...meta, lastMessage: lastText(messages) } as Omit<Session, "messages"> & { lastMessage: string });
@@ -244,13 +247,44 @@ export class Store {
   getSession(id: string): Session | undefined {
     if (!/^[A-Za-z0-9_-]+$/.test(id) || this.deleted.has(id)) return undefined;
     const cached = this.sessionCache.get(id);
-    if (cached) return cached;
+    if (cached) { this.sessionCache.delete(id); this.sessionCache.set(id, cached); return cached; }
+    const s = this.readSessionFile(id);
+    if (!s) return undefined;
+    this.cacheSession(id, s);
+    return s;
+  }
+
+  /** Inserts into the cache and drops the oldest entries past the bound (an in-flight reply keeps its own reference). */
+  private cacheSession(id: string, s: Session): void {
+    this.sessionCache.set(id, s);
+    while (this.sessionCache.size > Store.SESSION_CACHE_MAX) { const oldest = this.sessionCache.keys().next().value as string; this.sessionCache.delete(oldest); }
+  }
+
+  static SESSION_CACHE_MAX = 40;
+
+  private readSessionFile(id: string): Session | undefined {
+    if (this.deleted.has(id)) return undefined;
     const file = path.join(this.dir, "sessions", id + ".json");
     if (!existsSync(file)) return undefined;
-    const s = readJson<Session | null>(file, null);
-    if (!s) return undefined;
-    this.sessionCache.set(id, s);
-    return s;
+    return readJson<Session | null>(file, null) ?? undefined;
+  }
+
+  /** Removes the given contacts from every session's member list; returns the ids of sessions that changed. */
+  removeMembersEverywhere(contactIds: string[]): string[] {
+    if (!contactIds.length) return [];
+    const gone = new Set(contactIds);
+    const changed: string[] = [];
+    for (const name of readdirSync(path.join(this.dir, "sessions"))) {
+      if (!name.endsWith(".json")) continue;
+      const s = this.getSession(name.slice(0, -5));
+      if (!s || !s.members.some((m) => gone.has(m.contactId))) continue;
+      s.members = s.members.filter((m) => !gone.has(m.contactId));
+      for (const m of s.members) if (m.driverContactId && gone.has(m.driverContactId)) m.driverContactId = undefined;
+      s.canEndDiscussion = s.canEndDiscussion.filter((id) => !gone.has(id));
+      this.saveSession(s);
+      changed.push(s.id);
+    }
+    return changed;
   }
 
   createSession(input: Partial<Session> & { kind: Session["kind"]; title: string }): Session {
@@ -278,7 +312,7 @@ export class Store {
       nextSeq: 1,
       messages: [],
     };
-    this.sessionCache.set(s.id, s);
+    this.cacheSession(s.id, s);
     this.saveSession(s);
     return s;
   }
@@ -296,7 +330,12 @@ export class Store {
     if (!s) return false;
     this.deleted.add(id); // after the read: getSession hides deleted ids, so the order matters
     this.sessionCache.delete(id);
-    try { unlinkSync(path.join(this.dir, "sessions", id + ".json")); } catch { return false; }
+    try { unlinkSync(path.join(this.dir, "sessions", id + ".json")); } catch {
+      // The file is still there, so the session must stay visible; otherwise it would silently return after a restart.
+      this.deleted.delete(id);
+      this.sessionCache.set(id, s);
+      return false;
+    }
     return true;
   }
 
@@ -309,18 +348,25 @@ export class Store {
 
   // ---------- ledger ----------
 
+  private ledgerCache: LedgerEntry[] | null = null;
+
   appendLedger(entry: LedgerEntry): void {
     appendFileSync(this.file("ledger.jsonl"), JSON.stringify(entry) + "\n", "utf8");
+    if (this.ledgerCache) this.ledgerCache.push(entry);
   }
 
+  /** The ledger is parsed once per process and kept in memory; appends update the copy. */
   readLedger(): LedgerEntry[] {
+    if (this.ledgerCache) return this.ledgerCache;
     const file = this.file("ledger.jsonl");
-    if (!existsSync(file)) return [];
     const out: LedgerEntry[] = [];
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      if (!line.trim()) continue;
-      try { out.push(JSON.parse(line) as LedgerEntry); } catch { /* skip bad line */ }
+    if (existsSync(file)) {
+      for (const line of readFileSync(file, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try { out.push(JSON.parse(line) as LedgerEntry); } catch { /* skip bad line */ }
+      }
     }
+    this.ledgerCache = out;
     return out;
   }
 }

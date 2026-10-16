@@ -4,6 +4,9 @@
 import type { ChatEvent, ChatFn } from "./types.js";
 import { ProviderError } from "./types.js";
 import { resolveExecutable, runLines, transcriptPrompt } from "./cli-base.js";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import path from "node:path";
 import type { Usage } from "../models.js";
 
 interface ClaudeLine {
@@ -74,7 +77,13 @@ export const chatClaudeCli: ChatFn = async function* (ctx, req) {
     "--verbose",
     "--include-partial-messages",
   ];
-  if (req.system) args.push("--system-prompt", req.system);
+  // A long system prompt (persona + member list + rules) would hit the command-line length limit; write it to a file.
+  let systemFile: string | undefined;
+  if (req.system) {
+    systemFile = path.join(ctx.cliCwd, `system-${randomBytes(6).toString("hex")}.txt`);
+    writeFileSync(systemFile, req.system, "utf8");
+    args.push("--system-prompt-file", systemFile);
+  }
   if (req.model) args.push("--model", req.model);
   const prompt = transcriptPrompt(req.messages, "You");
   const st: ClaudeParseState = { sawDelta: false, assistantText: "" };
@@ -94,4 +103,5 @@ export const chatClaudeCli: ChatFn = async function* (ctx, req) {
     if (st.assistantText) yield { type: "delta", text: st.assistantText };
     yield { type: "done" };
   }
+  if (systemFile) { try { unlinkSync(systemFile); } catch { /* ignore */ } }
 };

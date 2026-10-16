@@ -119,6 +119,8 @@ export interface Session {
   summary: Summary | null;
   discussion: Discussion | null;
   allowModelMentions: boolean;
+  /** Reply to several @mentions at once instead of one after another (the default lets later ones see earlier replies). */
+  parallelMentions?: boolean;
   speakingOrder: SpeakingOrder;
   roundGapSec: number;
   canEndDiscussion: string[];
@@ -142,6 +144,8 @@ export interface Attachment {
   captionBy?: string;
   captionCost?: Cost;
   captionError?: string;
+  /** Name of the stored file under attachments/ (hash plus the original extension). */
+  file?: string;
 }
 
 export interface Usage {

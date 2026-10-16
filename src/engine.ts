@@ -13,7 +13,7 @@ import { getChatFn, ProviderError, type ChatRequest } from "./providers/index.js
 export type Broadcast = (event: string, data: unknown) => void;
 
 export interface CallResult { text: string; usage: Usage; cost: Cost; model: string }
-export interface CallMeta { purpose: "summary" | "vision" | "host"; sessionId: string; messageId?: string }
+export interface CallMeta { purpose: "summary" | "vision" | "host"; sessionId: string; messageId?: string; timeoutMs?: number }
 /** A plain, non-streaming call to one contact, used by background helpers (secretary, vision). Records the ledger. */
 export type CallContact = (contact: Contact, req: Omit<ChatRequest, "signal">, meta: CallMeta) => Promise<CallResult>;
 
@@ -78,7 +78,7 @@ export class Engine {
         let usage: Usage | undefined;
         let model = contact.model;
         let usageMissing = false;
-        for await (const ev of chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, { ...req, signal: AbortSignal.timeout(600000) })) {
+        for await (const ev of chat({ account, key: store.getKey(account.id), cliCwd: store.file("cli-cwd") }, { ...req, signal: AbortSignal.timeout(meta.timeoutMs ?? 600000) })) {
           if (ev.type === "delta") text += ev.text;
           else if (ev.type === "usage") usage = ev.usage;
           else if (ev.type === "status" && ev.text === "usage-missing") usageMissing = true;

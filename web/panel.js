@@ -143,6 +143,7 @@ export class Panel {
       html += f(t("session.intro"), `<textarea id="p-intro">${escapeHtml(s.intro)}</textarea>`, t("session.introHint"));
       html += `<div class="row">${f(t("cost.perRound") + " ($)", `<input id="p-per-round" type="number" min="0" step="0.1" value="${s.budget?.perRound ?? ""}">`)}${f(t("cost.total") + " ($)", `<input id="p-total" type="number" min="0" step="0.1" value="${s.budget?.total ?? ""}">`)}</div>`;
       html += `<label class="check"><input type="checkbox" id="p-mentions" ${s.allowModelMentions ? "checked" : ""}> ${escapeHtml(t("session.allowMentions"))}</label>`;
+      html += `<label class="check"><input type="checkbox" id="p-parallel" ${s.parallelMentions ? "checked" : ""}> ${escapeHtml(t("session.parallelMentions"))}</label>`;
       html += f(t("session.order"), `<select id="p-order">${orders.map((o) => `<option value="${o}" ${s.speakingOrder === o ? "selected" : ""}>${escapeHtml(t("session.order." + o))}</option>`).join("")}</select>`);
       html += f(t("session.gap"), `<input id="p-gap" type="number" min="0" value="${s.roundGapSec}">`);
     }
@@ -155,6 +156,7 @@ export class Panel {
       if (s.kind === "group") {
         body.intro = q("#p-intro").value;
         body.allowModelMentions = q("#p-mentions").checked;
+        body.parallelMentions = q("#p-parallel").checked;
         body.speakingOrder = q("#p-order").value;
         body.roundGapSec = Number(q("#p-gap").value) || 0;
         body.budget = {};

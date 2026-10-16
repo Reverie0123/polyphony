@@ -67,7 +67,7 @@ export function defaultWebDir(): string {
 }
 
 export class SseHub {
-  private clients = new Set<http.ServerResponse>();
+  private clients = new Map<http.ServerResponse, NodeJS.Timeout>();
   private seq = 0;
   constructor(private onChange?: (n: number) => void) {}
 
@@ -83,9 +83,9 @@ export class SseHub {
       "X-Accel-Buffering": "no",
     });
     res.write(": connected\n\n");
-    this.clients.add(res);
-    this.onChange?.(this.clients.size);
     const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* ignore */ } }, 25000);
+    this.clients.set(res, ping);
+    this.onChange?.(this.clients.size);
     res.on("close", () => {
       clearInterval(ping);
       this.clients.delete(res);
@@ -95,8 +95,8 @@ export class SseHub {
 
   broadcast(event: string, data: unknown): void {
     const payload = `id: ${++this.seq}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const c of this.clients) {
-      try { c.write(payload); } catch { this.clients.delete(c); }
+    for (const [c, ping] of this.clients) {
+      try { c.write(payload); } catch { clearInterval(ping); this.clients.delete(c); }
     }
   }
 }
@@ -114,6 +114,17 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export { parseMentionsIn as parseMentions } from "./mentions.js";
+
+/** "@names" typed by the user that match no member, so the page can say so instead of silently dropping them. */
+export function unknownMentions(text: string, nicknames: string[]): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/@([^\s@，。,.!！?？:：（）()]{1,24})/g)) {
+    const typed = m[1];
+    if (nicknames.some((n) => n && (typed.startsWith(n) || n.startsWith(typed)))) continue;
+    if (!out.includes(typed)) out.push(typed);
+  }
+  return out;
+}
 
 export function createApp(opts: ServerOptions): { server: http.Server; hub: SseHub } {
   const { store, pricing, engine, attachments, vision, summarizer, orchestrator, deskdock } = opts;
@@ -144,9 +155,11 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
 
   const readBody = (req: http.IncomingMessage): Promise<Record<string, unknown>> =>
     new Promise((resolve, reject) => {
-      let data = "";
-      req.on("data", (c: Buffer) => { data += c.toString("utf8"); if (data.length > 20_000_000) { reject(new HttpError(413, "body too large")); req.destroy(); } });
-      req.on("end", () => { try { resolve(data ? (JSON.parse(data) as Record<string, unknown>) : {}); } catch { reject(new HttpError(400, "invalid JSON")); } });
+      // Chunks are joined as bytes first: decoding each chunk alone can split a multibyte character into U+FFFD.
+      const chunks: Buffer[] = [];
+      let size = 0;
+      req.on("data", (c: Buffer) => { chunks.push(c); size += c.length; if (size > 20_000_000) { reject(new HttpError(413, "body too large")); req.destroy(); } });
+      req.on("end", () => { const data = Buffer.concat(chunks).toString("utf8"); try { resolve(data ? (JSON.parse(data) as Record<string, unknown>) : {}); } catch { reject(new HttpError(400, "invalid JSON")); } });
       req.on("error", reject);
     });
 
@@ -317,7 +330,12 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         if (!a) throw new HttpError(404, "account not found", "not_found");
         return json(res, 200, maskAccount(a));
       }
-      if (method === "DELETE" && parts.length === 3) return json(res, 200, { ok: store.deleteAccount(id) });
+      if (method === "DELETE" && parts.length === 3) {
+        const gone = store.listContacts().filter((c) => c.accountId === id).map((c) => c.id);
+        const ok = store.deleteAccount(id);
+        for (const sid of store.removeMembersEverywhere(gone)) { const sess = store.getSession(sid); if (sess) hub.broadcast("session.updated", { session: withoutMessages(sess) }); }
+        return json(res, 200, { ok });
+      }
     }
 
     // ----- contacts -----
@@ -355,7 +373,11 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         if (!c) throw new HttpError(404, "contact not found", "not_found");
         return json(res, 200, c);
       }
-      if (method === "DELETE" && parts.length === 3) return json(res, 200, { ok: store.deleteContact(id) });
+      if (method === "DELETE" && parts.length === 3) {
+        const ok = store.deleteContact(id);
+        if (ok) for (const sid of store.removeMembersEverywhere([id])) { const sess = store.getSession(sid); if (sess) hub.broadcast("session.updated", { session: withoutMessages(sess) }); }
+        return json(res, 200, { ok });
+      }
     }
 
     // ----- sessions -----
@@ -391,6 +413,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         if (typeof b.intro === "string") s.intro = b.intro;
         if (typeof b.pinned === "boolean") s.pinned = b.pinned;
         if (typeof b.allowModelMentions === "boolean") s.allowModelMentions = b.allowModelMentions;
+        if (typeof b.parallelMentions === "boolean") s.parallelMentions = b.parallelMentions;
         if (typeof b.speakingOrder === "string" && ["list", "random", "host", "race"].includes(b.speakingOrder)) s.speakingOrder = b.speakingOrder as Session["speakingOrder"];
         if (typeof b.roundGapSec === "number") s.roundGapSec = Math.max(0, b.roundGapSec);
         if (Array.isArray(b.canEndDiscussion)) s.canEndDiscussion = (b.canEndDiscussion as unknown[]).filter((x): x is string => typeof x === "string" && s.members.some((m) => m.contactId === x));
@@ -439,7 +462,11 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         const editedFrom = str(b.editedFrom) || undefined;
         if (editedFrom) {
           const old = s.messages.find((x) => x.id === editedFrom && x.sender === "user");
-          if (old) { old.excludedFromContext = true; hub.broadcast("message.updated", { sessionId: s.id, message: old }); }
+          if (old) {
+            old.excludedFromContext = true;
+            if (s.summary && old.seq <= s.summary.coversUpToSeq) s.summary.dirty = true;
+            hub.broadcast("message.updated", { sessionId: s.id, message: old });
+          }
         }
         const kind: Message["kind"] = atts.some((a) => isImage(a.mime)) ? "image" : atts.length ? "file" : "text";
         const userMsg = store.appendMessage(s, {
@@ -452,16 +479,16 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
         const deskNick = store.getContact(DESKDOCK_CONTACT_ID)?.nickname ?? "DeskDock";
         const overrideNick = parseDriverOverride(text, deskNick);
         const driverOverride = overrideNick ? store.listContacts().find((c) => c.nickname === overrideNick && c.id !== DESKDOCK_CONTACT_ID)?.id : undefined;
+        const ignoredMentions = unknownMentions(text, nicks.map((n) => n.nickname));
         const run = async () => {
           await vision.describe(s, userMsg);
-          for (const contactId of mentions) {
-            if (contactId === DESKDOCK_CONTACT_ID) await deskdock.runTask(s, userMsg, driverOverride);
-            else await engine.reply(s, contactId, userMsg);
-          }
+          const one = (contactId: string) => (contactId === DESKDOCK_CONTACT_ID ? deskdock.runTask(s, userMsg, driverOverride) : engine.reply(s, contactId, userMsg));
+          if (s.parallelMentions) await Promise.all(mentions.map(one));
+          else for (const contactId of mentions) await one(contactId);
           if (!mentions.length) void summarizer.maybeRun(s);
         };
         void run();
-        return json(res, 200, { message: userMsg });
+        return json(res, 200, { message: userMsg, ignoredMentions });
       }
       // ----- free discussion -----
       if (parts[3] === "discussion" && method === "POST" && parts.length === 4) {

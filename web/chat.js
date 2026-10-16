@@ -245,7 +245,8 @@ export class ChatView {
     this.pendingAttachments = [];
     this.renderAttachRow();
     try {
-      await post(`/api/sessions/${s.id}/messages`, body);
+      const r = await post(`/api/sessions/${s.id}/messages`, body);
+      if (r.ignoredMentions?.length) this.ctx.toast(t("composer.unknownMention", { names: r.ignoredMentions.join("、") }), true);
     } catch (err) {
       this.ctx.toast(err.message, true);
       this.input.value = text;
@@ -433,15 +434,6 @@ export class ChatView {
     }
     body.appendChild(sender);
 
-    // A regenerated reply folds away as "previous version".
-    if (m.supersededAt && !isUser) {
-      const d = document.createElement("details");
-      d.className = "folded";
-      d.innerHTML = `<summary>${escapeHtml(t("msg.superseded"))}</summary><div class="bubble">${renderMarkdown(m.text)}</div>`;
-      body.appendChild(d);
-      wrap.appendChild(body);
-      return wrap;
-    }
     // A user message superseded by an edit folds away.
     const supersededBy = isUser && m.excludedFromContext ? this.session.messages.find((x) => x.editedFrom === m.id) : null;
     if (supersededBy) {

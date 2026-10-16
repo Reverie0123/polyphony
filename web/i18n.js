@@ -238,6 +238,8 @@ const zh = {
   "token.reset": "重置令牌",
   "token.hint": "令牌存在本机数据目录，书签里带的是它。重置后这个窗口继续可用，其他已打开的页面要从快捷方式重新打开。",
   "token.done": "令牌已重置",
+  "session.parallelMentions": "一条消息 @ 多人时同时回答（默认依次回答，后者看得到前者）",
+  "composer.unknownMention": "没有叫「{names}」的成员，这部分 @ 没有生效",
   "confirm": "确定",
 };
 
@@ -480,6 +482,8 @@ const en = {
   "token.reset": "Reset token",
   "token.hint": "The token lives in the local data folder and is what bookmarks carry. After a reset this window keeps working; other open pages must be reopened from the shortcut.",
   "token.done": "Token reset",
+  "session.parallelMentions": "Answer several @mentions at once (default: one after another, later ones see earlier replies)",
+  "composer.unknownMention": "No member called \"{names}\"; that mention did nothing",
   "confirm": "OK",
 };
 
