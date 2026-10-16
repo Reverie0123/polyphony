@@ -88,6 +88,7 @@ export const chatClaudeCli: ChatFn = async function* (ctx, req) {
   const prompt = transcriptPrompt(req.messages, "You");
   const st: ClaudeParseState = { sawDelta: false, assistantText: "" };
   let done = false;
+  try {
   // When Polyphony itself was started from inside a Claude Code session, the inherited CLAUDE_CODE_* variables would make
   // the child believe it is a nested session; drop them so the child uses its own login.
   const env: NodeJS.ProcessEnv = {};
@@ -103,5 +104,7 @@ export const chatClaudeCli: ChatFn = async function* (ctx, req) {
     if (st.assistantText) yield { type: "delta", text: st.assistantText };
     yield { type: "done" };
   }
-  if (systemFile) { try { unlinkSync(systemFile); } catch { /* ignore */ } }
+  } finally {
+    if (systemFile) { try { unlinkSync(systemFile); } catch { /* ignore */ } }
+  }
 };

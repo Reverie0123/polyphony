@@ -597,27 +597,7 @@ export function createApp(opts: ServerOptions): { server: http.Server; hub: SseH
 
     // ----- ledger -----
     if (p === "/api/ledger" && method === "GET") {
-      const sessionId = url.searchParams.get("sessionId") ?? "";
-      const entries = store.readLedger();
-      const today = new Date();
-      const isToday = (iso: string) => { const d = new Date(iso); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate(); };
-      const byProvider: Record<string, { usd: number; calls: number }> = {};
-      let sessionUsd = 0;
-      let todayUsd = 0;
-      let allUsd = 0;
-      let unpricedCalls = 0;
-      let sessionUnpriced = 0;
-      for (const e of entries) {
-        if (e.cost.kind === "metered" && !e.cost.priced) { unpricedCalls++; if (e.sessionId === sessionId) sessionUnpriced++; }
-        allUsd += e.cost.usd;
-        if (e.sessionId === sessionId) sessionUsd += e.cost.usd;
-        if (isToday(e.at)) todayUsd += e.cost.usd;
-        const k = e.provider === "cli" ? "cli" : e.provider;
-        byProvider[k] = byProvider[k] ?? { usd: 0, calls: 0 };
-        byProvider[k].usd += e.cost.usd;
-        byProvider[k].calls++;
-      }
-      return json(res, 200, { sessionUsd, todayUsd, allUsd, byProvider, unpricedCalls, sessionUnpriced });
+      return json(res, 200, store.ledgerSummary(url.searchParams.get("sessionId") ?? ""));
     }
 
     // ----- pricing -----

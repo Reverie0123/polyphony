@@ -1,5 +1,5 @@
 // JSON persistence. One file per collection, one file per session; every write goes through a temp file and rename.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, appendFileSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, appendFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import {
@@ -45,15 +45,42 @@ export function writeJsonAtomic(file: string, value: unknown): void {
   const tmp = file + ".tmp";
   writeFileSync(tmp, JSON.stringify(value, null, 1), "utf8");
   // On Windows a scanner or editor holding the target makes rename fail with EPERM/EBUSY for a moment; retry briefly.
+  const pending = pendingRenames.get(file);
+  if (pending) { clearTimeout(pending); pendingRenames.delete(file); }
   try {
     renameSync(tmp, file);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw e;
-    // The target is held open by a scanner or editor: copy over it instead of blocking the event loop with a retry wait.
-    copyFileSync(tmp, file);
-    try { unlinkSync(tmp); } catch { /* ignore */ }
+    // The target is held open by a scanner or editor. The rename stays the only way the target changes (so a crash can
+    // never leave a half-written file); it is retried shortly in the background. The tmp file always holds the newest content.
+    scheduleRename(tmp, file, 1);
   }
+}
+
+const pendingRenames = new Map<string, NodeJS.Timeout>();
+const RENAME_RETRY_MS = [50, 150, 400, 1000, 2500];
+
+function scheduleRename(tmp: string, file: string, attempt: number): void {
+  const delay = RENAME_RETRY_MS[Math.min(attempt, RENAME_RETRY_MS.length) - 1];
+  const timer = setTimeout(() => {
+    pendingRenames.delete(file);
+    try {
+      renameSync(tmp, file);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return; // a newer write already renamed it
+      if (attempt >= RENAME_RETRY_MS.length) { console.error(`[polyphony] could not replace ${path.basename(file)} after ${attempt} attempts: ${code}; the newest content is in ${path.basename(tmp)}`); return; }
+      scheduleRename(tmp, file, attempt + 1);
+    }
+  }, delay);
+  timer.unref();
+  pendingRenames.set(file, timer);
+}
+
+/** Test hook: true while a rename is still waiting to be retried. */
+export function hasPendingWrite(file: string): boolean {
+  return pendingRenames.has(file);
 }
 
 interface Collection<T> { schemaVersion: number; items: T[] }
@@ -349,26 +376,102 @@ export class Store {
   // ---------- ledger ----------
 
   private ledgerCache: LedgerEntry[] | null = null;
+  private ledgerTotals: LedgerTotals | null = null;
+  static LEDGER_KEEP_DAYS = 30;
 
   appendLedger(entry: LedgerEntry): void {
     appendFileSync(this.file("ledger.jsonl"), JSON.stringify(entry) + "\n", "utf8");
     if (this.ledgerCache) this.ledgerCache.push(entry);
   }
 
-  /** The ledger is parsed once per process and kept in memory; appends update the copy. */
+  /**
+   * Recent entries (last LEDGER_KEEP_DAYS days) are parsed once per process and kept in memory; older ones are folded
+   * into ledger-totals.json and moved to ledger-archive.jsonl on load, so the live file and the memory stay small.
+   */
   readLedger(): LedgerEntry[] {
     if (this.ledgerCache) return this.ledgerCache;
     const file = this.file("ledger.jsonl");
-    const out: LedgerEntry[] = [];
+    const all: LedgerEntry[] = [];
     if (existsSync(file)) {
       for (const line of readFileSync(file, "utf8").split("\n")) {
         if (!line.trim()) continue;
-        try { out.push(JSON.parse(line) as LedgerEntry); } catch { /* skip bad line */ }
+        try { all.push(JSON.parse(line) as LedgerEntry); } catch { /* skip bad line */ }
       }
     }
-    this.ledgerCache = out;
-    return out;
+    this.ledgerTotals = readJson<LedgerTotals>(this.file("ledger-totals.json"), emptyTotals());
+    const cutoff = Date.now() - Store.LEDGER_KEEP_DAYS * 86400000;
+    const old = all.filter((e) => Date.parse(e.at) < cutoff);
+    const recent = all.filter((e) => !(Date.parse(e.at) < cutoff));
+    if (old.length) {
+      for (const e of old) foldInto(this.ledgerTotals, e);
+      appendFileSync(this.file("ledger-archive.jsonl"), old.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+      writeJsonAtomic(this.file("ledger-totals.json"), this.ledgerTotals);
+      writeFileSync(file, recent.map((e) => JSON.stringify(e)).join("\n") + (recent.length ? "\n" : ""), "utf8");
+    }
+    this.ledgerCache = recent;
+    return recent;
   }
+
+  /** Totals for the cost panel: archived history plus the live entries. */
+  ledgerSummary(sessionId: string): LedgerSummary {
+    const entries = this.readLedger();
+    const t = this.ledgerTotals ?? emptyTotals();
+    const today = new Date();
+    const isToday = (iso: string) => { const d = new Date(iso); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate(); };
+    const byProvider: Record<string, { usd: number; calls: number }> = {};
+    for (const [k, v] of Object.entries(t.byProvider)) byProvider[k] = { ...v };
+    let sessionUsd = t.perSession[sessionId]?.usd ?? 0;
+    let sessionUnpriced = t.perSession[sessionId]?.unpriced ?? 0;
+    let todayUsd = 0;
+    let allUsd = t.allUsd;
+    let unpricedCalls = t.unpricedCalls;
+    for (const e of entries) {
+      allUsd += e.cost.usd;
+      if (e.cost.kind === "metered" && !e.cost.priced) { unpricedCalls++; if (e.sessionId === sessionId) sessionUnpriced++; }
+      if (e.sessionId === sessionId) sessionUsd += e.cost.usd;
+      if (isToday(e.at)) todayUsd += e.cost.usd;
+      const k = e.provider;
+      byProvider[k] = byProvider[k] ?? { usd: 0, calls: 0 };
+      byProvider[k].usd += e.cost.usd;
+      byProvider[k].calls++;
+    }
+    return { sessionUsd, todayUsd, allUsd, byProvider, unpricedCalls, sessionUnpriced };
+  }
+}
+
+export interface LedgerTotals {
+  schemaVersion: number;
+  allUsd: number;
+  unpricedCalls: number;
+  byProvider: Record<string, { usd: number; calls: number }>;
+  perSession: Record<string, { usd: number; unpriced: number }>;
+  archivedThrough: string | null;
+}
+
+export interface LedgerSummary {
+  sessionUsd: number;
+  todayUsd: number;
+  allUsd: number;
+  byProvider: Record<string, { usd: number; calls: number }>;
+  unpricedCalls: number;
+  sessionUnpriced: number;
+}
+
+function emptyTotals(): LedgerTotals {
+  return { schemaVersion: 1, allUsd: 0, unpricedCalls: 0, byProvider: {}, perSession: {}, archivedThrough: null };
+}
+
+function foldInto(t: LedgerTotals, e: LedgerEntry): void {
+  t.allUsd += e.cost.usd;
+  const unpriced = e.cost.kind === "metered" && !e.cost.priced;
+  if (unpriced) t.unpricedCalls++;
+  const p = (t.byProvider[e.provider] = t.byProvider[e.provider] ?? { usd: 0, calls: 0 });
+  p.usd += e.cost.usd;
+  p.calls++;
+  const s = (t.perSession[e.sessionId] = t.perSession[e.sessionId] ?? { usd: 0, unpriced: 0 });
+  s.usd += e.cost.usd;
+  if (unpriced) s.unpriced++;
+  if (!t.archivedThrough || e.at > t.archivedThrough) t.archivedThrough = e.at;
 }
 
 function lastText(messages: Message[]): string {
