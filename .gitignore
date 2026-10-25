@@ -4,3 +4,9 @@ build/
 dist-installer/
 *.log
 *.lnk
+
+# 开发者笔记，不入库
+CLAUDE.md
+待办-需要你动手.md
+进度记录.md
+docs/
