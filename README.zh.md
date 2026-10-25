@@ -38,8 +38,6 @@ npm test
 node dist/index.js --no-open
 ```
 
-设计方案与调研在 `docs/`。
-
 ## 协议
 
 MIT

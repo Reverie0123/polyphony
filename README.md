@@ -38,8 +38,6 @@ npm test
 node dist/index.js --no-open
 ```
 
-Design notes and the competitor survey are in `docs/` (Chinese).
-
 ## License
 
 MIT
